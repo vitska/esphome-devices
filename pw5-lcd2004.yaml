@@ -1,0 +1,116 @@
+substitutions:
+  friendly_name: "pw5-lcd2004"
+
+esphome:
+  name: ${friendly_name}
+  friendly_name: ${friendly_name}
+
+esp8266:
+  board: d1_mini
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "9xDoERVh8ZligOQmBQQ4pMwqaiwD7Fc0AX2tqr4hv+o="
+
+ota:
+  - platform: esphome
+    password: "34347f438078df2efda62dc77d9970f3"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Pw5-Lcd2004 Fallback Hotspot"
+    password: "9FzCGnEU1Np1"
+
+captive_portal:
+
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+  frequency: 400kHz
+
+display:
+  - platform: lcd_pcf8574
+    dimensions: 20x4
+    i2c_id: bus_a
+    address: 0x3F
+    lambda: |-
+      it.strftime("%H:%M:%S", id(esptime).now());
+#      it.print("Hello World!");
+#      it.strftime("It is %H:%M on %d.%m.%Y", id(esptime).now());
+
+ads1115:
+  - address: 0x48
+
+sensor:
+  - platform: ads1115
+    id: ads1115_a0
+    multiplexer: 'A0_GND'
+    gain: 1.024
+    accuracy_decimals: 4
+    name: "A0-GND"
+    update_interval: 20ms
+
+  - platform: ads1115
+    id: ads1115_a1
+    multiplexer: 'A1_GND'
+    gain: 1.024
+    accuracy_decimals: 4
+    name: "A1-GND"
+    update_interval: 20ms
+
+  - platform: ads1115
+    id: ads1115_a2
+    multiplexer: 'A2_GND'
+    gain: 1.024
+    accuracy_decimals: 4
+    name: "A2-GND"
+    update_interval: 20ms
+
+  - platform: ads1115
+    id: ads1115_a3
+    multiplexer: 'A3_GND'
+    gain: 1.024
+    accuracy_decimals: 4
+    name: "A3-GND"
+    update_interval: 20ms
+
+  - platform: ct_clamp
+    sensor: ads1115_a0
+    accuracy_decimals: 4
+    name: "A0 Current"
+    update_interval: 10s
+
+  - platform: ct_clamp
+    sensor: ads1115_a1
+    accuracy_decimals: 4
+    name: "A1 Current"
+    update_interval: 10s
+
+  - platform: ct_clamp
+    sensor: ads1115_a2
+    accuracy_decimals: 4
+    name: "A2 Current"
+    update_interval: 10s
+
+  - platform: ct_clamp
+    sensor: ads1115_a3
+    accuracy_decimals: 4
+    name: "A3 Current"
+    update_interval: 10s
+
+# time:
+#   - platform: sntp
+#     id: sntp_time
+time:
+  - platform: homeassistant
+    id: esptime

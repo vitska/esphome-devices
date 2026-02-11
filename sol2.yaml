@@ -1,0 +1,473 @@
+esphome:
+  name: sol2
+  friendly_name: sol2
+  # on_boot:
+  #   priority: 600
+  #   then:
+  #     - output.esp8266_pwm.set_frequency:
+  #         id: pwm_output
+  #         frequency: 40000Hz
+
+esp8266:
+  board: d1_mini_pro
+
+# Enable logging
+logger:
+  baud_rate: 0
+  # level: NONE
+  # level: ERROR
+  # level: WARN
+  # level: INFO # The local log level DEBUG for sensor.ads1115 must be less severe than the global log level INFO.
+  # level: VERY_VERBOSE
+  level: DEBUG
+  logs:
+    sensor.ads1115: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.sol2
+
+ota:
+  - platform: esphome
+    password: !secret ota.sol2
+
+wifi:
+  networks:
+  - bssid: 24:81:C7:97:27:30 # ssid: DALEKA
+    password: !secret wifi_password
+  - bssid: C4:2B:44:44:8E:64 # ssid: DALEKA
+    password: !secret wifi_password
+  - ssid: DALEKA-2
+    password: !secret wifi_password
+
+  reboot_timeout: 20s
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Sol2 Fallback Hotspot"
+    password: !secret ap.sol2
+
+captive_portal:
+    
+i2c:
+  id: bus_a
+  sda: D2
+  scl: D1
+  scan: True
+  frequency: 50000Hz
+
+# ads1115:
+#   i2c_id: bus_a
+#   address: 0x48
+
+sensor:
+  - platform: ina3221
+    address: 0x43
+    channel_1:
+      shunt_resistance: 0.1 ohm
+      current:
+        name: "OUT Current"
+        id: out_current
+        accuracy_decimals: 3
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      power:
+        name: "OUT Power"
+        id: out_power
+        accuracy_decimals: 3
+        unit_of_measurement: W
+        device_class: "energy"
+        state_class: "total"
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      bus_voltage:
+        name: "OUT Voltage"
+        accuracy_decimals: 3
+        id: out_voltage
+        filters: 
+          - throttle_average: 
+              seconds: 10
+        #   - calibrate_linear:
+        #       method: exact
+        #       datapoints:
+        #         # Map 0.0 (from sensor) to 0.0 (true value)
+        #         - 0 -> 0
+        #         - 10 -> 9.829
+      # shunt_voltage:
+      #   name: "OUT Shunt Voltage"
+      #   id: out_shunt_voltage
+      #   unit_of_measurement: 'mV'
+      #   accuracy_decimals: 2
+      #   filters:
+      #     - lambda: return x * 1000;
+      #     - throttle_average: 
+      #         seconds: 2
+    channel_2:
+      shunt_resistance: 0.1 ohm
+      current:
+        name: "BAT Current"
+        id: bat_current
+        accuracy_decimals: 3
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      power:
+        name: "BAT Power"
+        id: bat_power
+        accuracy_decimals: 3
+        unit_of_measurement: W
+        device_class: "energy"
+        state_class: "total"
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      bus_voltage:
+        name: "BAT Voltage"
+        accuracy_decimals: 3
+        id: bat_voltage
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      # shunt_voltage:
+      #   name: "BAT Shunt Voltage"
+      #   id: bat_shunt_voltage
+      #   unit_of_measurement: 'mV'
+      #   accuracy_decimals: 2
+      #   filters:
+      #     - lambda: return x * 1000;
+      #     - throttle_average: 
+      #         seconds: 2
+    channel_3:
+      shunt_resistance: 0.1 ohm
+      current:
+        name: "IN Current"
+        accuracy_decimals: 3
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      power:
+        name: "IN Power"
+        id: in_power
+        accuracy_decimals: 3
+        unit_of_measurement: W
+        device_class: "energy"
+        state_class: "total"
+        filters: 
+          - throttle_average: 
+              seconds: 10
+
+        on_value_range:
+        # on_value:
+          - below: -0.015
+            then:
+              - if:
+                  condition:
+                    sensor.in_range:
+                      id: bat_level
+                      above: 50.0
+                  then:
+                  - logger.log:
+                      level: WARN
+                      format: "IN Power [%.3f] below -0.0244 and batery level [%.3f] above 75%% turn on OUT1"
+                      args: [ 'id(in_power).state', 'id(bat_level).state' ]
+                  - light.turn_on:
+                      id: out1
+                      brightness: 50%
+          - above: -0.01
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "IN Power [%.3f] above 0 turn OFF OUT1"
+                  args: [ 'id(in_power).state' ]
+              - light.turn_off:
+                  id: out1
+
+      bus_voltage:
+        name: "IN Voltage"
+        id: in_voltage
+        accuracy_decimals: 3
+        filters: 
+          - throttle_average: 
+              seconds: 10
+      # shunt_voltage:
+      #   name: "IN Shunt Voltage"
+      #   id: in_shunt_voltage
+      #   unit_of_measurement: 'mV'
+      #   accuracy_decimals: 2
+      #   filters:
+      #     - lambda: return x * 1000;
+      #     - throttle_average: 
+      #         seconds: 2
+    # max_voltage: 8.0V
+    # max_current: 3.2A
+    update_interval: 1000ms
+
+  - platform: copy
+    id: bat_voltage_compensation
+    source_id: bat_power
+    icon: mdi:battery
+    name: BAT Voltage compensation
+    unit_of_measurement: 'V'
+    accuracy_decimals: 5
+    filters:
+      - throttle_average: 2s
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            # Map 0.0 (from sensor) to 0.0 (true value)
+            - -6.5 -> -0.11
+            - -1.8 -> -0.025
+            - 0 -> 0
+            - 1.8 -> 0.025
+            - 6.5 -> 0.11
+
+  - platform: copy
+    id: bat_voltage_corrected
+    source_id: bat_voltage
+    icon: mdi:battery
+    name: BAT Voltage corrected
+    unit_of_measurement: 'V'
+    accuracy_decimals: 5
+    filters:
+      - sliding_window_moving_average:
+          window_size: 8
+          send_every: 1
+          # send_first_at: 3
+
+      - lambda: |- 
+          return x - id(bat_voltage_compensation).state;
+
+  - platform: copy
+    source_id: bat_voltage_corrected
+    icon: mdi:battery
+    name: BAT level
+    id: bat_level
+    unit_of_measurement: '%'
+    accuracy_decimals: 2
+    filters:
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 2
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            # Map 0.0 (from sensor) to 0.0 (true value)
+            - 0 -> 0
+            - 3.60 -> 0
+            - 3.70 -> 10
+            - 4.12 -> 90
+            - 4.2 -> 100
+            - 5 -> 100
+    on_value:
+      then:
+        - if:
+            condition:
+              sensor.in_range:
+                id: bat_level
+                below: 5.0
+            then:
+            - logger.log:
+                level: WARN
+                format: "Batery level [%.3f] below 5%% turn OFF OUT1"
+                args: [ 'id(bat_level).state' ]
+            - light.turn_off:
+                id: out1
+
+  - platform: copy
+    source_id: in_power
+    icon: mdi:battery
+    name: Efficiency
+    id: EF
+    unit_of_measurement: '%'
+    accuracy_decimals: 0
+    filters:
+      - max: 
+      - throttle_average: 15s
+      - lambda: |- 
+          auto value = (id(out_power).state + id(bat_power).state) * 100 / id(in_power).state;
+          if (value >= 100.0) { 
+            return 100.0;
+          }
+          else if (value <= 0.0) { 
+            return 0.0;
+          }
+          return value;
+
+  - platform: integration
+    name: "IN Energy"
+    sensor: in_power
+    id: in_energy
+    accuracy_decimals: 3
+    time_unit: h
+    restore: True
+    unit_of_measurement: Wh
+    device_class: "energy"
+    state_class: "total_increasing"
+
+  - platform: integration
+    name: "OUT Energy"
+    sensor: out_power
+    id: out_energy
+    accuracy_decimals: 3
+    time_unit: h
+    restore: True
+    unit_of_measurement: Wh
+    device_class: "energy"
+    state_class: "total_increasing"
+
+  - platform: integration
+    name: "BAT Energy"
+    sensor: bat_power
+    id: bat_energy
+    accuracy_decimals: 3
+    time_unit: h
+    restore: True
+    unit_of_measurement: Wh
+    device_class: "energy"
+    state_class: "total_increasing"
+
+  - platform: integration
+    name: "BAT Capacity"
+    sensor: bat_current
+    id: bat_capacity
+    accuracy_decimals: 3
+    time_unit: h
+    restore: True
+    unit_of_measurement: Ah
+    device_class: "energy"
+    state_class: "total_increasing"
+
+  - platform: bme280_i2c
+    address: 0x76
+    i2c_id: bus_a
+    update_interval: 20s
+    temperature:
+      name: "Temperature"
+      accuracy_decimals: 3
+    #   filters:
+    #     - throttle_average: 120s
+    pressure:
+      name: "Pressure"
+      # filters:
+      #   - throttle_average: 120s
+    humidity:
+      name: "Humidity"
+      accuracy_decimals: 3
+      # filters:
+      #   - throttle_average: 120s
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_db
+    update_interval: 2s
+    filters:
+      - throttle_average: 30s
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+    device_class: ""
+    icon: mdi:wifi
+
+  - platform: uptime
+    name: Uptime
+    update_interval: 10s
+
+number:
+  - platform: template
+    name: Config value
+    id: config_val
+    entity_category: config
+    optimistic: true
+    step: 0.01
+    min_value: 0
+    max_value: 10
+    restore_value: true
+    initial_value: 5
+
+switch:
+  # - platform: gpio
+  #   pin: D5
+  #   restore_mode: RESTORE_DEFAULT_OFF
+  #   name: "Charge"
+  # - platform: gpio
+  #   pin: 12
+  #   name: "D6"
+  # - platform: gpio
+  #   pin: 13
+  #   name: "D7"
+
+output:
+  - platform: esp8266_pwm
+    pin: D3
+    frequency: 500Hz
+    id: pwm_d3
+  # - platform: esp8266_pwm
+  #   pin: D4
+  #   frequency: 40000Hz
+  #   id: pwm_d4
+  # - platform: esp8266_pwm
+  #   pin: D0
+  #   frequency: 40000Hz
+  #   id: pwm_d0
+
+# Example usage in a light
+light:
+  - platform: monochromatic
+    output: pwm_d3
+    restore_mode: RESTORE_DEFAULT_OFF
+    default_transition_length: 5s
+    id: out1
+    name: "OUT1"
+  # - platform: monochromatic
+  #   output: pwm_d4
+  #   name: "D4"
+  # - platform: monochromatic
+  #   output: pwm_d0
+  #   name: "D0"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP
+    ssid:
+      name: SSID
+    # bssid:
+    #   name: ESP Connected BSSID
+    # mac_address:
+    #   name: Mac Wifi Address
+    scan_results:
+      name: WiFi Scan Results
+    # dns_address:
+    #   name: ESP DNS Address
+
+button:
+  - platform: restart
+    name: Restart
+
+  - platform: template
+    name: Reset energy
+    id: reset_energy
+    on_press:
+      then:
+        - sensor.integration.reset:  in_energy
+        - sensor.integration.reset:  out_energy
+        - sensor.integration.reset:  bat_energy
+        - sensor.integration.reset:  bat_capacity
+
+# deep_sleep:
+#   id: deep_sleep_1
+#   run_duration: 24h #
+#   sleep_duration: 10s
+
+status_led:
+  pin:
+    number: D4
+    inverted: yes    

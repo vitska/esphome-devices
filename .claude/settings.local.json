@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show:*)",
+      "Bash(pip3 show:*)",
+      "Bash(python -m esphome:*)",
+      "Bash($env:PATH -split ';')",
+      "Bash(Select-String -Pattern \"Python\")",
+      "Bash(Test-Path \"C:\\Users\\viktor.gorovoj\\AppData\\Roaming\\Python\\Python312\\Scripts\\esphome.exe\")",
+      "Bash(Get-ChildItem \"C:\\Users\\viktor.gorovoj\\AppData\\Roaming\\Python\\Python312\\Scripts\" -Filter \"esphome*\")",
+      "Bash(tr:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(\"C:/Users/viktor.gorovoj/AppData/Roaming/Python/Python312/Scripts/esphome.exe\" version)"
+    ]
+  }
+}

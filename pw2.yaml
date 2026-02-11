@@ -1,0 +1,128 @@
+# Small screen and encodder
+substitutions:
+  friendly_name: "Pw2"
+
+esphome:
+  name: pw2
+
+esp8266:
+  board: d1_mini
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.pw2
+
+ota:
+  - platform: esphome
+    password: !secret ota.pw2
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Pw2 Fallback Hotspot"
+    password: !secret ap.pw2
+
+captive_portal:
+
+# safe_mode:
+#   disabled: true
+
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+  frequency: 800kHz
+    
+font:
+  - file: "https://github.com/bluescan/proggyfonts/raw/refs/heads/master/ProggyVector/ProggyVector-Regular.ttf"
+    id: font_1
+    size: 26
+  # - file: "MaterialIcons-Regular.ttf"
+  #   id: icon_font_28
+  #   size: 28
+  #   glyphs: [
+  #     "", # WiFi full
+  #     "", # WiFi 2
+  #     "", # WiFi 1
+  #     "", # WiFi 0
+  #     "" # no-wifi
+  #   ]
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x32"
+    i2c_id: bus_a
+    address: 0x3C
+    contrast: 10%
+    # invert: true
+    lambda: |-
+      it.strftime(64, 0, id(font_1), TextAlign::TOP_CENTER, "%H:%M:%S", id(esptime).now());
+
+sensor:
+  - platform: uptime
+    id: uptime_1
+    name: "Uptime Sensor"
+
+  - platform: rotary_encoder
+    name: "Rotary Encoder"
+    pin_a:
+      number: 12
+      # inverted: true
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: 14
+      # inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_clockwise:
+      - logger.log: "Turned Clockwise"
+    on_anticlockwise:
+      - logger.log: "Turned Anticlockwise"
+
+  - platform: wifi_signal
+    id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal"
+    update_interval: 60s
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+    device_class: ""
+    icon: mdi:wifi
+
+  - platform: homeassistant
+    id: outside_temperature
+    entity_id: sensor.temp_out_y3_temperature
+    internal: true
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Connected SSID"
+    # mac_address:
+    #   name: "Mac Address"
+    scan_results:
+      name: WiFi Scan Results
+
+# time:
+#   - platform: sntp
+#     id: sntp_time
+time:
+  - platform: homeassistant
+    id: esptime

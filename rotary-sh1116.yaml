@@ -1,0 +1,724 @@
+substitutions:
+  friendly_name: "rotary-sh1116"
+
+esphome:
+  name: rotary-sh1116
+  friendly_name: rotary-sh1116
+  on_boot:
+    priority: 600
+    then:
+      - lambda: 'id(template_switching) = true;'
+
+esp8266:
+  board: esp01_1m
+  restore_from_flash: true
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.rotary-sh1116
+  on_client_connected:
+    then:
+      - lambda: 'id(template_switching) = true;'
+      - delay: 5s
+      - script.execute: apply_template
+
+ota:
+  - platform: esphome
+    password: !secret ota.rotary-sh1116
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Rotary-SH1116 Fallback Hotspot"
+    password: !secret ap.rotary-sh1116
+
+captive_portal:
+
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+  frequency: 800kHz
+
+globals:
+  - id: last_activity
+    type: unsigned long
+    initial_value: '0'
+  - id: active_template
+    type: int
+    restore_value: true
+    initial_value: '1'
+  - id: apply_countdown
+    type: int
+    initial_value: '0'
+  - id: template_switching
+    type: bool
+    initial_value: 'false'
+  - id: applied_at
+    type: unsigned long
+    initial_value: '0'
+  - id: all_step
+    type: int
+    initial_value: '0'
+  - id: apply_idx
+    type: int
+    initial_value: '0'
+  - id: ch_num
+    type: int
+    initial_value: '0'
+  - id: ch_step
+    type: int
+    initial_value: '0'
+  # Night template brightness per LED (~10%)
+  - id: night_led0
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led1
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led2
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led3
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led4
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led5
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led6
+    type: int
+    restore_value: true
+    initial_value: '26'
+  - id: night_led7
+    type: int
+    restore_value: true
+    initial_value: '26'
+  # Day template brightness per LED (~90%)
+  - id: day_led0
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led1
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led2
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led3
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led4
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led5
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led6
+    type: int
+    restore_value: true
+    initial_value: '230'
+  - id: day_led7
+    type: int
+    restore_value: true
+    initial_value: '230'
+  # Custom template brightness per LED (~50%)
+  - id: custom_led0
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led1
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led2
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led3
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led4
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led5
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led6
+    type: int
+    restore_value: true
+    initial_value: '128'
+  - id: custom_led7
+    type: int
+    restore_value: true
+    initial_value: '128'
+
+script:
+  - id: reset_activity
+    mode: restart
+    then:
+      - lambda: 'id(last_activity) = millis();'
+      - delay: 10s
+      - display.page.show: page_template
+      - component.update: lcd
+  - id: delayed_apply
+    mode: restart
+    then:
+      - lambda: |-
+          id(template_switching) = true;
+          id(apply_countdown) = 15;
+      - component.update: lcd
+      - repeat:
+          count: 15
+          then:
+            - delay: 1s
+            - lambda: 'id(apply_countdown) -= 1;'
+            - component.update: lcd
+      - script.execute: apply_template
+  - id: apply_template
+    mode: restart
+    then:
+      - lambda: |-
+          id(template_switching) = true;
+          id(apply_idx) = 0;
+      - repeat:
+          count: 8
+          then:
+            - homeassistant.service:
+                service: light.turn_on
+                data_template:
+                  entity_id: "light.kitchen_light1_led{{ ch }}"
+                  brightness: "{{ brightness_val }}"
+                variables:
+                  ch: !lambda 'return id(apply_idx);'
+                  brightness_val: !lambda |-
+                    int i = id(apply_idx);
+                    int* n[] = {&id(night_led0), &id(night_led1), &id(night_led2), &id(night_led3),
+                                &id(night_led4), &id(night_led5), &id(night_led6), &id(night_led7)};
+                    int* d[] = {&id(day_led0), &id(day_led1), &id(day_led2), &id(day_led3),
+                                &id(day_led4), &id(day_led5), &id(day_led6), &id(day_led7)};
+                    int* c[] = {&id(custom_led0), &id(custom_led1), &id(custom_led2), &id(custom_led3),
+                                &id(custom_led4), &id(custom_led5), &id(custom_led6), &id(custom_led7)};
+                    if (id(active_template) == 0) return *n[i];
+                    if (id(active_template) == 1) return *d[i];
+                    return *c[i];
+            - lambda: 'id(apply_idx) += 1;'
+      - delay: 2s
+      - lambda: |-
+          id(template_switching) = false;
+          id(applied_at) = millis();
+      - component.update: lcd
+  - id: adjust_all
+    mode: single
+    then:
+      - lambda: 'id(apply_idx) = 0;'
+      - repeat:
+          count: 8
+          then:
+            - homeassistant.service:
+                service: light.turn_on
+                data_template:
+                  entity_id: "light.kitchen_light1_led{{ ch }}"
+                  brightness_step: "{{ step_val }}"
+                variables:
+                  ch: !lambda 'return id(apply_idx);'
+                  step_val: !lambda 'return id(all_step);'
+            - lambda: 'id(apply_idx) += 1;'
+  - id: adjust_channel
+    mode: single
+    then:
+      - homeassistant.service:
+          service: light.turn_on
+          data_template:
+            entity_id: "light.kitchen_light1_led{{ ch }}"
+            brightness_step: "{{ step_val }}"
+          variables:
+            ch: !lambda 'return id(ch_num);'
+            step_val: !lambda 'return id(ch_step);'
+
+font:
+  - file: "gfonts://Roboto Mono"
+    id: font_small
+    size: 12
+  - file: "gfonts://Roboto Mono"
+    id: font_big
+    size: 18
+
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    id: lcd
+    i2c_id: bus_a
+    address: 0x3C
+    pages:
+      - id: page_template
+        lambda: |-
+          const char* names[] = {"Night", "Day", "Custom"};
+          int active = id(active_template);
+          // WiFi signal indicator (5 bars)
+          float db = id(wifi_signal_db).state;
+          int level = 0;
+          if (!isnan(db)) {
+            if (db >= -50) level = 5;
+            else if (db >= -60) level = 4;
+            else if (db >= -70) level = 3;
+            else if (db >= -80) level = 2;
+            else if (db >= -90) level = 1;
+          }
+          for (int b = 0; b < 5; b++) {
+            int x = b * 5;
+            if (b < level) {
+              int h = 3 + b * 2;
+              it.filled_rectangle(x, 13 - h, 3, h);
+            } else {
+              it.filled_rectangle(x, 12, 3, 1);
+            }
+          }
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          bool show_check = (millis() - id(applied_at)) < 3000 && id(applied_at) > 0;
+          for (int i = 0; i < 3; i++) {
+            int y = 14 + i * 12;
+            it.printf(0, y, id(font_small), TextAlign::TOP_LEFT, "%s %s", (i == active) ? ">" : " ", names[i]);
+            if (i == active && show_check) {
+              int cx = 75, cy = y + 3;
+              it.line(cx, cy + 3, cx + 2, cy + 5);
+              it.line(cx + 2, cy + 5, cx + 6, cy);
+            }
+          }
+          int cd = id(apply_countdown);
+          if (cd > 0 && (millis() / 500) % 2 == 0) {
+            it.printf(0, 50, id(font_small), TextAlign::TOP_LEFT, "Master: %s", id(master_state).state.c_str());
+          } else if (cd <= 0) {
+            it.printf(0, 50, id(font_small), TextAlign::TOP_LEFT, "Master: %s", id(master_state).state.c_str());
+          }
+          if (cd > 0) it.printf(80, 50, id(font_small), TextAlign::TOP_LEFT, "%d", cd);
+          // Channel bar graph from active template
+          int vals[8];
+          if (active == 0) {
+            vals[0]=id(night_led0); vals[1]=id(night_led1); vals[2]=id(night_led2); vals[3]=id(night_led3);
+            vals[4]=id(night_led4); vals[5]=id(night_led5); vals[6]=id(night_led6); vals[7]=id(night_led7);
+          } else if (active == 1) {
+            vals[0]=id(day_led0); vals[1]=id(day_led1); vals[2]=id(day_led2); vals[3]=id(day_led3);
+            vals[4]=id(day_led4); vals[5]=id(day_led5); vals[6]=id(day_led6); vals[7]=id(day_led7);
+          } else {
+            vals[0]=id(custom_led0); vals[1]=id(custom_led1); vals[2]=id(custom_led2); vals[3]=id(custom_led3);
+            vals[4]=id(custom_led4); vals[5]=id(custom_led5); vals[6]=id(custom_led6); vals[7]=id(custom_led7);
+          }
+          // Graph boundary
+          it.rectangle(88, 14, 40, 34);
+          // 25/50/75% dashed markers
+          for (int y = 15; y < 47; y += 2) {
+            it.draw_pixel_at(98, y);
+            it.draw_pixel_at(108, y);
+            it.draw_pixel_at(118, y);
+          }
+          // Channel bars
+          for (int i = 0; i < 8; i++) {
+            int y = 16 + i * 4;
+            int w = vals[i] * 38 / 255;
+            if (w > 0) it.horizontal_line(89, y, w);
+          }
+      - id: page_wifi
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "WiFi");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          it.printf(0, 14, id(font_small), TextAlign::TOP_LEFT, "SSID: %s", id(wifi_ssid).state.c_str());
+          float dbm = id(wifi_signal_db).state;
+          int pct = isnan(dbm) ? 0 : (int)fmin(fmax(2 * (dbm + 100.0), 0.0), 100.0);
+          it.printf(0, 24, id(font_small), TextAlign::TOP_LEFT, "S: %.0fdb %d%%", dbm, pct);
+          it.printf(0, 34, id(font_small), TextAlign::TOP_LEFT, "IP: %s", id(wifi_ip_address).state.c_str());
+          it.printf(0, 44, id(font_small), TextAlign::TOP_LEFT, "Master: %s", id(master_state).state.c_str());
+      - id: page_all
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "All Ch");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float vals[] = {
+            id(led0_brightness).state, id(led1_brightness).state,
+            id(led2_brightness).state, id(led3_brightness).state,
+            id(led4_brightness).state, id(led5_brightness).state,
+            id(led6_brightness).state, id(led7_brightness).state
+          };
+          // Graph boundary
+          it.rectangle(4, 14, 120, 48);
+          // 25/50/75% dashed markers
+          for (int y = 15; y < 61; y += 2) {
+            it.draw_pixel_at(34, y);
+            it.draw_pixel_at(64, y);
+            it.draw_pixel_at(94, y);
+          }
+          // Channel bars
+          for (int i = 0; i < 8; i++) {
+            int y = 17 + i * 6;
+            int v = isnan(vals[i]) ? 0 : (int)vals[i];
+            int w = v * 116 / 255;
+            if (w > 0) it.filled_rectangle(5, y, w, 4);
+          }
+      - id: page_led0
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-1");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led0_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led1
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-2");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led1_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led2
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-3");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led2_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led3
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-4");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led3_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led4
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-5");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led4_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led5
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-6");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led5_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led6
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-7");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led6_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+      - id: page_led7
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-8");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          float val = id(led7_brightness).state;
+          int pct = isnan(val) ? 0 : (int)(val / 255.0f * 100.0f);
+          it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%d%%", pct);
+          it.rectangle(4, 48, 120, 12);
+          int fill = (int)(pct / 100.0f * 116);
+          if (fill > 0) it.filled_rectangle(6, 50, fill, 8);
+
+binary_sensor:
+  - platform: gpio
+    id: button_confirm
+    pin:
+      number: 2
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_click:
+      - display.page.show_next: lcd
+      - component.update: lcd
+      - script.execute: reset_activity
+  - platform: gpio
+    id: button_back
+    pin:
+      number: 0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_click:
+      - display.page.show_previous: lcd
+      - component.update: lcd
+      - script.execute: reset_activity
+  - platform: gpio
+    id: button_encoder
+    pin:
+      number: 13
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_click:
+      max_length: 1000ms
+      then:
+        - homeassistant.action:
+            action: light.toggle
+            data:
+              entity_id: light.tz3000_ji4araar_ts0011
+        - component.update: lcd
+        - script.execute: reset_activity
+
+sensor:
+  - platform: homeassistant
+    id: led0_brightness
+    entity_id: light.kitchen_light1_led0
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led0) = val;
+              else if (id(active_template) == 1) id(day_led0) = val;
+              else id(custom_led0) = val;
+            }
+  - platform: homeassistant
+    id: led1_brightness
+    entity_id: light.kitchen_light1_led1
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led1) = val;
+              else if (id(active_template) == 1) id(day_led1) = val;
+              else id(custom_led1) = val;
+            }
+  - platform: homeassistant
+    id: led2_brightness
+    entity_id: light.kitchen_light1_led2
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led2) = val;
+              else if (id(active_template) == 1) id(day_led2) = val;
+              else id(custom_led2) = val;
+            }
+  - platform: homeassistant
+    id: led3_brightness
+    entity_id: light.kitchen_light1_led3
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led3) = val;
+              else if (id(active_template) == 1) id(day_led3) = val;
+              else id(custom_led3) = val;
+            }
+  - platform: homeassistant
+    id: led4_brightness
+    entity_id: light.kitchen_light1_led4
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led4) = val;
+              else if (id(active_template) == 1) id(day_led4) = val;
+              else id(custom_led4) = val;
+            }
+  - platform: homeassistant
+    id: led5_brightness
+    entity_id: light.kitchen_light1_led5
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led5) = val;
+              else if (id(active_template) == 1) id(day_led5) = val;
+              else id(custom_led5) = val;
+            }
+  - platform: homeassistant
+    id: led6_brightness
+    entity_id: light.kitchen_light1_led6
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led6) = val;
+              else if (id(active_template) == 1) id(day_led6) = val;
+              else id(custom_led6) = val;
+            }
+  - platform: homeassistant
+    id: led7_brightness
+    entity_id: light.kitchen_light1_led7
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!id(template_switching) && !isnan(x)) {
+              int val = (int)x;
+              if (id(active_template) == 0) id(night_led7) = val;
+              else if (id(active_template) == 1) id(day_led7) = val;
+              else id(custom_led7) = val;
+            }
+
+  - platform: rotary_encoder
+    name: "Rotary Encoder"
+    id: encoder
+    pin_a:
+      number: 14
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: 12
+      mode:
+        input: true
+        pullup: true
+    on_clockwise:
+      - if:
+          condition:
+            display.is_displaying_page: page_template
+          then:
+            - lambda: |-
+                id(active_template) = (id(active_template) + 1) % 3;
+                global_preferences->sync();
+            - script.execute: apply_template
+      - lambda: |-
+          auto p = id(lcd).get_active_page();
+          int ch = -1;
+          if (p == id(page_all)) { id(all_step) = 25; id(adjust_all).execute(); }
+          else if (p == id(page_led0)) ch = 0;
+          else if (p == id(page_led1)) ch = 1;
+          else if (p == id(page_led2)) ch = 2;
+          else if (p == id(page_led3)) ch = 3;
+          else if (p == id(page_led4)) ch = 4;
+          else if (p == id(page_led5)) ch = 5;
+          else if (p == id(page_led6)) ch = 6;
+          else if (p == id(page_led7)) ch = 7;
+          if (ch >= 0) { id(ch_num) = ch; id(ch_step) = 25; id(adjust_channel).execute(); }
+      - script.execute: reset_activity
+      - component.update: lcd
+    on_anticlockwise:
+      - if:
+          condition:
+            display.is_displaying_page: page_template
+          then:
+            - lambda: |-
+                id(active_template) = (id(active_template) + 2) % 3;
+                global_preferences->sync();
+            - script.execute: apply_template
+      - lambda: |-
+          auto p = id(lcd).get_active_page();
+          int ch = -1;
+          if (p == id(page_all)) { id(all_step) = -25; id(adjust_all).execute(); }
+          else if (p == id(page_led0)) ch = 0;
+          else if (p == id(page_led1)) ch = 1;
+          else if (p == id(page_led2)) ch = 2;
+          else if (p == id(page_led3)) ch = 3;
+          else if (p == id(page_led4)) ch = 4;
+          else if (p == id(page_led5)) ch = 5;
+          else if (p == id(page_led6)) ch = 6;
+          else if (p == id(page_led7)) ch = 7;
+          if (ch >= 0) { id(ch_num) = ch; id(ch_step) = -25; id(adjust_channel).execute(); }
+      - script.execute: reset_activity
+      - component.update: lcd
+
+  - platform: wifi_signal
+    id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal"
+    update_interval: 60s
+
+
+text_sensor:
+  - platform: homeassistant
+    id: master_state
+    entity_id: light.tz3000_ji4araar_ts0011
+    internal: true
+    on_value:
+      then:
+        - if:
+            condition:
+              text_sensor.state:
+                id: master_state
+                state: "on"
+            then:
+              - script.execute: delayed_apply
+            else:
+              - script.stop: delayed_apply
+              - lambda: |-
+                  id(template_switching) = false;
+                  id(apply_countdown) = -1;
+              - component.update: lcd
+              - delay: 3s
+              - lambda: 'if (id(apply_countdown) < 0) id(apply_countdown) = 0;'
+              - component.update: lcd
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip_address
+      name: "IP Address"
+    ssid:
+      id: wifi_ssid
+      name: "Connected SSID"
+
+button:
+  - platform: restart
+    id: button_restart
+    name: "Restart"
+
+time:
+  - platform: homeassistant
+    id: esptime

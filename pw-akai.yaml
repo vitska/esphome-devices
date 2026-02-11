@@ -1,0 +1,464 @@
+substitutions:
+  friendly_name: "pw-akai" # Actually this is just a demo for LCD displaying HA temperature value and internet time
+  project_version: "1.1"
+  sensor_update_interval: 2s
+
+esphome:
+  name: pw-akai
+  friendly_name: pw-akai
+
+api:
+  encryption:
+    key: !secret api.pw-akai
+
+esp8266:
+  board: d1_mini
+
+# Enable logging
+logger:
+
+ota:
+  - platform: esphome
+    password: !secret ota.pw-akai
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "pw-akai Fallback Hotspot"
+    password: !secret ap.pw-akai
+
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+  frequency: 400kHz
+    
+captive_portal:
+    
+sensor:
+  - platform: uptime
+    name: "Uptime Sensor"
+
+  - platform: wifi_signal
+    id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal"
+    update_interval: 60s
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+    device_class: ""
+    icon: mdi:wifi
+
+  # - platform: homeassistant
+  #   id: outside_temperature
+  #   entity_id: sensor.sol2_temperature
+  #   internal: true
+
+mcp23017:
+  - id: 'mcp_led'
+    address: 0x20
+  - id: 'mcp_buttons'
+    address: 0x21
+    
+
+switch:
+  - platform: gpio
+    name: "LED0"
+    id: LED0
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 0
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED1"
+    id: LED1
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 1
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED2"
+    id: LED2
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 2
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED3"
+    id: LED3
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 3
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED4"
+    id: LED4
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 4
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED5"
+    id: LED5
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 5
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED6"
+    id: LED6
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 6
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED7"
+    id: LED7
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 7
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED8"
+    id: LED8
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 8
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED9"
+    id: LED9
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 9
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED10"
+    id: LED10
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 10
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED11"
+    id: LED11
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 11
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED12"
+    id: LED12
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 12
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED13"
+    id: LED13
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 13
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED14"
+    id: LED14
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 14
+      mode:
+        output: true
+      inverted: false
+  - platform: gpio
+    name: "LED15"
+    id: LED15
+    restore_mode: RESTORE_DEFAULT_OFF
+    pin:
+      mcp23xxx: mcp_led
+      number: 15
+      mode:
+        output: true
+      inverted: false
+
+binary_sensor:
+  - platform: gpio
+    name: "BTN0"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 0
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED0
+
+  - platform: gpio
+    name: "BTN1"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 1
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED1
+  - platform: gpio
+    name: "BTN2"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 2
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED2
+  - platform: gpio
+    name: "BTN3"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 3
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED3
+  - platform: gpio
+    name: "BTN4"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 4
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED4
+  - platform: gpio
+    name: "BTN5"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 5
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED5
+  - platform: gpio
+    name: "BTN6"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 6
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED6
+  - platform: gpio
+    name: "BTN7"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 7
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED7
+  - platform: gpio
+    name: "BTN8"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 8
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED8
+  - platform: gpio
+    name: "BTN9"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 9
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED9
+  - platform: gpio
+    name: "BTN10"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 10
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED10
+  - platform: gpio
+    name: "BTN11"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 11
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED11
+  - platform: gpio
+    name: "BTN12"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 12
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED12
+  - platform: gpio
+    name: "BTN13"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 13
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED13
+  - platform: gpio
+    name: "BTN14"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 14
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED14
+  - platform: gpio
+    name: "BTN15"
+    pin:
+      mcp23xxx: mcp_buttons
+      number: 15
+      # One of INPUT or INPUT_PULLUP
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    on_press:
+      then:
+        - switch.toggle: LED15
+  
+      
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Connected SSID"
+    # mac_address:
+    #   name: "Mac Address"
+    scan_results:
+      name: WiFi Scan Results
+
+# time:
+#   - platform: sntp
+#     id: sntp_time
+time:
+  - platform: homeassistant
+    id: esptime

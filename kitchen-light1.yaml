@@ -1,0 +1,198 @@
+substitutions:
+  friendly_name: "rotary-k1"
+
+esphome:
+  name: kitchen-light1
+  friendly_name: kitchen-light1
+
+esp8266:
+  board: d1_mini
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.kitchen-light1
+
+ota:
+  - platform: esphome
+    password: !secret ota.kitchen-light1
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Kitchen-Light1 Fallback Hotspot"
+    password: !secret ap.kitchen-light1
+
+captive_portal:
+    
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+  frequency: 400kHz
+
+# Example configuration entry
+pca9685:
+  - id: pca9685_hub1
+    frequency: 500
+
+# Individual outputs
+output:
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 0
+    id: pwm0
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 1
+    id: pwm1
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 2
+    id: pwm2
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 3
+    id: pwm3
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 4
+    id: pwm4
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 5
+    id: pwm5
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 6
+    id: pwm6
+  - platform: pca9685
+    pca9685_id: 'pca9685_hub1'
+    channel: 7
+    id: pwm7
+  
+light:
+  - platform: monochromatic
+    id: led0
+    name: 'led0'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm0
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led1
+    name: 'led1'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm1
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led2
+    name: 'led2'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm2
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led3
+    name: 'led3'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm3
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led4
+    name: 'led4'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm4
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led5
+    name: 'led5'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm5
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led6
+    name: 'led6'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm6
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+  - platform: monochromatic
+    id: led7
+    name: 'led7'
+    restore_mode: RESTORE_DEFAULT_ON
+    output: pwm7
+    default_transition_length: 5s
+    effects:
+      - random:
+          transition_length: 5s
+          update_interval: 5s
+
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip_address
+      name: "IP Address"
+    ssid:
+      id: wifi_ssid
+      name: "Connected SSID"
+    # mac_address:
+    #   name: "Mac Address"
+    scan_results:
+      id: wifi_scan
+      name: WiFi Scan Results
+
+button:
+  - platform: restart
+    id: button_restart
+    name: "Restart"
+
+event:
+  - platform: template
+    name: "Uplight event"
+    event_types:
+      - "esphome.uplight"
+    on_event:
+      then:
+        - lambda: |-
+            ESP_LOGD("main", "Event %s triggered.", event_type.c_str());
+
+# time:
+#   - platform: sntp
+#     id: sntp_time
+time:
+  - platform: homeassistant
+    id: esptime

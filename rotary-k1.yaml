@@ -1,0 +1,473 @@
+substitutions:
+  friendly_name: "rotary-k1"
+
+esphome:
+  name: rotary-k1
+  friendly_name: rotary-k1
+
+esp8266:
+  board: esp01_1m
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.rotary-k1
+
+ota:
+  - platform: esphome
+    password: !secret ota.rotary-k1
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Rotary-K1 Fallback Hotspot"
+    password: !secret ap.rotary-k1
+
+captive_portal:
+
+i2c:
+  sda: 4
+  scl: 5
+  scan: true
+  id: bus_a
+  frequency: 800kHz
+    
+font:
+  - file: "https://github.com/bluescan/proggyfonts/raw/refs/heads/master/ProggyVector/ProggyVector-Regular.ttf"
+    id: font_small
+    size: 12
+  - file: "https://github.com/bluescan/proggyfonts/raw/refs/heads/master/ProggyVector/ProggyVector-Regular.ttf"
+    id: font_big
+    size: 18
+  # - file: "MaterialIcons-Regular.ttf"
+  #   id: icon_font_28
+  #   size: 28
+  #   glyphs: [
+  #     "", # WiFi full
+  #     "", # WiFi 2
+  #     "", # WiFi 1
+  #     "", # WiFi 0
+  #     "" # no-wifi
+  #   ]
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    id: lcd
+    i2c_id: bus_a
+    address: 0x3C
+    # contrast: 10%
+    # invert: true
+    pages:
+      - id: page_id
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "WiFi");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+          it.printf(0, 14, id(font_small), TextAlign::TOP_LEFT, "SSID: %s", id(wifi_ssid).state.c_str());
+          it.printf(0, 24, id(font_small), TextAlign::TOP_LEFT, "S: %.0fdb %.0f%%", id(wifi_signal_db).state, id(wifi_signal_percent).state);
+          it.printf(0, 34, id(font_small), TextAlign::TOP_LEFT, "IP: %s", id(wifi_ip_address).state.c_str());
+          it.printf(0, 44, id(font_small), TextAlign::TOP_LEFT, "N: ${friendly_name}");
+      - id: page_led0
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-1");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led0).current_values.get_brightness() * 100);
+      - id: page_led1
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-2");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led1).current_values.get_brightness() * 100);
+      - id: page_led2
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-3");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led2).current_values.get_brightness() * 100);
+      - id: page_led3
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-4");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led3).current_values.get_brightness() * 100);
+      - id: page_led4
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-5");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led4).current_values.get_brightness() * 100);
+      - id: page_led5
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-6");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led5).current_values.get_brightness() * 100);
+      - id: page_led6
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-7");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led6).current_values.get_brightness() * 100);
+      - id: page_led7
+        lambda: |-
+          it.printf(10, 0, id(font_small), TextAlign::TOP_LEFT, "Led-8");
+          it.strftime(68, 0, id(font_small), TextAlign::TOP_LEFT, "%H:%M:%S", id(esptime).now());
+        # it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led7).current_values.get_brightness() * 100);
+
+binary_sensor:
+  - platform: gpio
+    id: button_encoder
+    pin:
+      number: 13
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_click:
+      - logger.log: "Button"
+      - display.page.show_next: lcd
+      - component.update: lcd
+#      - display.page.show_previous: oled1
+
+# Example configuration entry
+# pca9685:
+#   - id: pca9685_hub1
+#     frequency: 500
+
+# Individual outputs
+# output:
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 0
+#     id: pwm0
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 1
+#     id: pwm1
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 2
+#     id: pwm2
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 3
+#     id: pwm3
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 4
+#     id: pwm4
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 5
+#     id: pwm5
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 6
+#     id: pwm6
+#   - platform: pca9685
+#     pca9685_id: 'pca9685_hub1'
+#     channel: 7
+#     id: pwm7
+  
+#   - platform: monochromatic
+#     id: led0
+#     name: 'led0'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm0
+#   - platform: monochromatic
+#     id: led1
+#     name: 'led1'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm1
+#   - platform: monochromatic
+#     id: led2
+#     name: 'led2'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm2
+#   - platform: monochromatic
+#     id: led3
+#     name: 'led3'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm3
+#   - platform: monochromatic
+#     id: led4
+#     name: 'led4'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm4
+#   - platform: monochromatic
+#     id: led5
+#     name: 'led5'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm5
+#   - platform: monochromatic
+#     id: led6
+#     name: 'led6'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm6
+#   - platform: monochromatic
+#     id: led7
+#     name: 'led7'
+#     restore_mode: RESTORE_DEFAULT_OFF
+#     output: pwm7
+
+sensor:
+
+  # - platform: homeassistant
+  #   id: led0
+  #   entity_id: light.kitchen_light1_led0
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led1
+  #   entity_id: light.kitchen_light1_led1
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led2
+  #   entity_id: light.kitchen_light1_led2
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led3
+  #   entity_id: light.kitchen_light1_led3
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led4
+  #   entity_id: light.kitchen_light1_led4
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led5
+  #   entity_id: light.kitchen_light1_led5
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led6
+  #   entity_id: light.kitchen_light1_led6
+  #   internal: true
+  # - platform: homeassistant
+  #   id: led7
+  #   entity_id: light.kitchen_light1_led7
+  #   internal: true
+
+  - platform: rotary_encoder
+    name: "Rotary Encoder"
+    id: encoder
+    pin_a:
+      number: 14
+      # inverted: true
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: 12
+      # inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_clockwise:
+# id(lcd).printf(64, 20, id(font_1), TextAlign::TOP_CENTER, "%f", id(encoder).state);
+      # - if:
+          # condition:
+          #   display.is_displaying_page: page_led0
+          # then:
+      - logger.log: "Event triggered"
+      - event.trigger:
+          id: uplight_t
+          event_type: esphome.k1.uplight
+
+        # - homeassistant.service: 
+        #     service: homeassistant.toggle
+        #     data:
+        #       entity_id: light.uplight # change to your light
+
+        # - homeassistant.action:
+        #     action: light.dim_relative:
+        #     data:
+        #       entity_id: light.kitchen_light1_led0
+        #     relative_brightness: 5%
+
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led0
+      #     then:
+      #       - homeassistant.action:
+      #           action: light.dim_relative:
+      #           data:
+      #             entity_id: light.kitchen_light1_led0
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led1
+      #     then:
+      #       - light.dim_relative:
+      #           id: led1
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led2
+      #     then:
+      #       - light.dim_relative:
+      #           id: led2
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led3
+      #     then:
+      #       - light.dim_relative:
+      #           id: led3
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led4
+      #     then:
+      #       - light.dim_relative:
+      #           id: led4
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led5
+      #     then:
+      #       - light.dim_relative:
+      #           id: led5
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led6
+      #     then:
+      #       - light.dim_relative:
+      #           id: led6
+      #           relative_brightness: 5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led7
+      #     then:
+      #       - light.dim_relative:
+      #           id: led7
+      #           relative_brightness: 5%
+      - component.update: lcd
+    on_anticlockwise:
+      # - logger.log: "Turned Anticlockwise"
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led0
+      #     then:
+      #       - light.dim_relative:
+      #           id: led0
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led1
+      #     then:
+      #       - light.dim_relative:
+      #           id: led1
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led2
+      #     then:
+      #       - light.dim_relative:
+      #           id: led2
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led3
+      #     then:
+      #       - light.dim_relative:
+      #           id: led3
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led4
+      #     then:
+      #       - light.dim_relative:
+      #           id: led4
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led5
+      #     then:
+      #       - light.dim_relative:
+      #           id: led5
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led6
+      #     then:
+      #       - light.dim_relative:
+      #           id: led6
+      #           relative_brightness: -5%
+      # - if:
+      #     condition:
+      #       display.is_displaying_page: page_led7
+      #     then:
+      #       - light.dim_relative:
+      #           id: led7
+      #           relative_brightness: -5%
+      - component.update: lcd
+
+  - platform: wifi_signal
+    id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal"
+    update_interval: 60s
+
+  - platform: copy # Reports the WiFi signal strength in %
+    id: wifi_signal_percent
+    source_id: wifi_signal_db
+    name: "${friendly_name} WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+    device_class: ""
+    icon: mdi:wifi
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip_address
+      name: "IP Address"
+    ssid:
+      id: wifi_ssid
+      name: "Connected SSID"
+    # mac_address:
+    #   name: "Mac Address"
+    scan_results:
+      id: wifi_scan
+      name: WiFi Scan Results
+
+button:
+  - platform: restart
+    id: button_restart
+    name: "Restart"
+
+# time:
+#   - platform: sntp
+#     id: sntp_time
+time:
+  - platform: homeassistant
+    id: esptime
+
+event:
+  - platform: template
+    name: uplight_t
+    id: uplight_t
+    # Optional variables:
+    # icon: "mdi:home-flood"
+    device_class: button
+    event_types: 
+      - esphome.k1.uplight
+
+    on_event:
+      then:
+        - logger.log: "esphome.uplight"
+        - homeassistant.event:
+            event: esphome.uplight
+            data:
+              message: "LED0"
+
+# script:
+#   - id: print_light
+# #     mode: restart
+#     then:
+#       - lambda: |-
+#           it.printf(64, 20, id(font_big), TextAlign::TOP_CENTER, "%.0f%%", id(led0).current_values.get_brightness() * 100);
+#       - delay: 0.1s
+#       - lambda: |-
+#           if(id(should_send)){
+#             id(exposed_volume).publish_state(id(rcvolume).state / 200.f);
+#           }
