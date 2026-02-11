@@ -261,12 +261,10 @@ script:
             step_val: !lambda 'return id(ch_step);'
 
 font:
-  - file: "gfonts://Roboto Mono"
+  - file: "fonts/Tamzen7x13r.bdf"
     id: font_small
-    size: 12
-  - file: "gfonts://Roboto Mono"
+  - file: "fonts/Tamzen8x15r.bdf"
     id: font_big
-    size: 18
 
 display:
   - platform: ssd1306_i2c
