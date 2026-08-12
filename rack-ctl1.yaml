@@ -1,0 +1,909 @@
+# Board Target Configuration
+esphome:
+  name: rack-controller
+  platformio_options:
+    board_build.flash_mode: dio
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(active_screen) = 0;
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.rack-ctl1
+
+ota:
+  - platform: esphome
+    password: !secret ota.rack-ctl1
+
+# On ESP32 a global's save() only queues the value in RAM — it reaches NVS flash
+# only on sync(), which otherwise happens just once every 60s by default.
+# Menu edits also sync() explicitly when edit mode is left; this is the backstop.
+preferences:
+  flash_write_interval: 10s
+
+# Onboard Ethernet (W5500 SPI)
+ethernet:
+  type: W5500
+  # Fixed by the Waveshare ESP32-S3-ETH board layout -- do not guess these.
+  # SCLK/CS/INT/RST are easy to rotate: CS is 14 (not 10) and SCLK is 13.
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+  # Default is 26.67MHz, which is marginal over jumper wires or a long trace to
+  # the W5500 and shows up as SPI init failures rather than a dead link.
+  clock_speed: 8MHz
+
+# Native ESPHome Globals for Menu State Management
+globals:
+  - id: active_screen
+    type: int
+    initial_value: '0' # 0: Fans/Temp, 1: Power In, 2: Power 12V, 3: Power 5V, 4: Menu
+  
+  - id: menu_index
+    type: int
+    initial_value: '0' # 0 to 5 for menu items
+  
+  - id: edit_mode
+    type: bool
+    initial_value: 'false'
+
+  # Rotor angle in degrees, advanced per frame in proportion to fan PWM
+  - id: fan1_angle
+    type: float
+    initial_value: '0.0'
+
+  - id: fan2_angle
+    type: float
+    initial_value: '0.0'
+
+  # Menu Variables (Persisted across reboots)
+  - id: temp_low
+    type: float
+    restore_value: yes
+    initial_value: '30.0'
+
+  - id: temp_high
+    type: float
+    restore_value: yes
+    initial_value: '60.0'
+
+  # Fan curve endpoints are RPM setpoints, not duty cycles: the duty needed to
+  # hold a given RPM varies between fan models and drifts with bearing wear, so
+  # the loop below solves for it instead of hard-coding it.
+  - id: fan1_rpm_low
+    type: float
+    restore_value: yes
+    initial_value: '600.0'
+
+  - id: fan1_rpm_high
+    type: float
+    restore_value: yes
+    initial_value: '2000.0'
+
+  - id: fan2_rpm_low
+    type: float
+    restore_value: yes
+    initial_value: '600.0'
+
+  - id: fan2_rpm_high
+    type: float
+    restore_value: yes
+    initial_value: '2000.0'
+
+  # Controller state. Duty is kept as a float so the integrator can accumulate
+  # fractions of a percent between ticks; the fan itself only takes integers.
+  - id: fan1_duty
+    type: float
+    initial_value: '30.0'
+
+  - id: fan2_duty
+    type: float
+    initial_value: '30.0'
+
+  # Target RPM for the current temperature, published here for the display.
+  - id: fan1_target_rpm
+    type: float
+    initial_value: '0.0'
+
+  - id: fan2_target_rpm
+    type: float
+    initial_value: '0.0'
+
+# I2C Bus Setup
+i2c:
+  sda: GPIO45
+  scl: GPIO46
+  scan: true
+  # Default is 50kHz: a full 1KB SSD1306 frame takes ~200ms on the bus, which
+  # makes every redraw feel sluggish. 400kHz cuts that to ~25ms.
+  frequency: 400kHz
+
+# 4-channel ADC for the thermistor dividers.
+ads1115:
+  - address: 0x48
+    # One-shot per read: continuous mode would keep the comparator running and
+    # only ever hold the last-converted channel, which breaks 4-way muxing.
+    continuous_mode: false
+
+# Rotor Animation: 20 FPS. A full 128x64 frame is ~23ms on a 400kHz bus, so
+# 50ms is about as fast as this panel can be driven with headroom to spare.
+interval:
+  - interval: 50ms
+    then:
+      - lambda: |-
+          // Only the fan screen animates; repainting the static screens at
+          // 20 FPS would just burn I2C bandwidth.
+          if (id(active_screen) != 0) {
+            return;
+          }
+          // Driven by the tachometer, not PWM: a fan that is commanded to spin
+          // but has stalled or lost power shows a stationary rotor.
+          // 3000 RPM maps to the 40deg/frame ceiling (~2.2 rev/s on screen).
+          // That ceiling stays under 60deg (a third of the 3-blade symmetry),
+          // past which the rotor aliases into stalling or spinning backwards.
+          auto step = [](float rpm) -> float {
+            if (std::isnan(rpm) || rpm <= 0.0f) {
+              return 0.0f;
+            }
+            return std::min(40.0f, (rpm / 3000.0f) * 40.0f);
+          };
+          id(fan1_angle) = fmodf(id(fan1_angle) + step(id(fan_1_speed).state), 360.0f);
+          id(fan2_angle) = fmodf(id(fan2_angle) + step(id(fan_2_speed).state), 360.0f);
+          id(oled_display)->update();
+
+  # Re-evaluate the fan curve once per second
+  - interval: 1s
+    then:
+      - script.execute: update_fans
+
+  - interval: 500ms
+    then:
+      - lambda: |-
+          // Diagnostic, not a status line: it reports on every outcome rather
+          // than only the happy one, and stays quiet once nothing changes.
+          //
+          // is_connected() is `state_ == CONNECTED`, which the component only
+          // reaches on IP_EVENT_ETH_GOT_IP -- so it means "has a DHCP lease",
+          // NOT "link is up". A W5500's own LEDs light from PHY autonegotiation
+          // alone, with no SPI traffic and no lease, so they cannot confirm any
+          // of this. Addresses are logged regardless of the connected flag: if
+          // a lease exists while the flag is false, the fault is in the state
+          // machine rather than in DHCP.
+          // Logged on change AND on a 10s heartbeat. Change-only reporting is
+          // invisible to a log session that attaches after boot, which is the
+          // normal case over USB -- the state settles before the port is open.
+          static std::string last_report;
+          static uint32_t last_report_ms = 0;
+          std::string report;
+
+          if (ethernet::global_eth_component == nullptr) {
+            report = "component NOT registered";
+          } else {
+            report = ethernet::global_eth_component->is_connected()
+                         ? "connected(has lease)"
+                         : "NOT connected(no lease)";
+            // Separates the two silent failures. The component logs nothing at
+            // all when the driver never starts, so is_failed() is the only way
+            // to tell "esp_eth setup errored" (SPI never worked) apart from
+            // "setup succeeded but ETHERNET_EVENT_START never arrived".
+            if (ethernet::global_eth_component->is_failed()) {
+              report += " COMPONENT-FAILED(setup error)";
+            }
+            for (auto &ip : ethernet::global_eth_component->get_ip_addresses()) {
+              if (ip.is_set()) {
+                report += " ip=" + ip.str();
+              }
+            }
+          }
+
+          uint32_t now = millis();
+          if (report != last_report || now - last_report_ms >= 10000) {
+            last_report = report;
+            last_report_ms = now;
+            ESP_LOGI("main", "Ethernet: %s", report.c_str());
+          }
+
+# Fan Curve: linear interpolation of rpm_low..rpm_high over temp_low..temp_high,
+# closed onto the tachometers so duty is whatever holds the target RPM.
+script:
+  - id: update_fans
+    then:
+      - lambda: |-
+          // Drive from the hottest sensor, not the average: one hot spot must
+          // not be masked by three cool readings.
+          //
+          // Because it is a max, a single bad channel dictates both fans, so
+          // readings are sanity-bounded first. An OPEN probe is already safe
+          // (node sits at Vcc, the resistance divider yields NaN), but a
+          // SHORTED probe or an unwired channel sits near 0V -> ~0 ohm ->
+          // implausibly hot -> the curve pins to rpm_high forever. Anything
+          // outside a range a rack can physically be in is a wiring fault,
+          // not a hot spot, so it is discarded rather than acted on.
+          const float T_MIN = -20.0f, T_MAX = 110.0f;
+          float temps[4] = {
+            id(temp_1).state, id(temp_2).state,
+            id(temp_3).state, id(temp_4).state
+          };
+          float t = NAN;
+          for (int i = 0; i < 4; i++) {
+            if (std::isnan(temps[i]) || temps[i] < T_MIN || temps[i] > T_MAX) {
+              continue;
+            }
+            if (std::isnan(t) || temps[i] > t) {
+              t = temps[i];
+            }
+          }
+          if (std::isnan(t)) {
+            return;  // no usable reading yet, leave the fans as they are
+          }
+
+          float span = id(temp_high) - id(temp_low);
+          float frac = (span > 0.0f) ? (t - id(temp_low)) / span
+                                     : (t >= id(temp_high) ? 1.0f : 0.0f);
+          frac = std::min(1.0f, std::max(0.0f, frac));
+
+          // Two stages: the curve picks a TARGET RPM from the temperature, then
+          // a closed loop trims duty until the tachometer reports that RPM.
+          //
+          // The loop is pure integral, no proportional term. The tach only
+          // refreshes once per second, so a P kick would act on second-old
+          // error and hunt; accumulating small corrections instead converges
+          // smoothly and drives steady-state error to zero, which is the whole
+          // point of asking for RPM rather than duty.
+          auto drive = [](fan::Fan *f, float rpm_low, float rpm_high, float frac,
+                          float actual, float &target, float &duty) {
+            target = roundf(rpm_low + frac * (rpm_high - rpm_low));
+
+            if (target < 1.0f) {
+              duty = 0.0f;
+            } else {
+              // A missing tach reading is not an error of zero -- integrating
+              // against it would slam the duty to 100%. Hold and wait.
+              if (!std::isnan(actual)) {
+                float err = target - actual;
+                // Deadband matches the tach's own resolution: a 1s gate at
+                // 2 pulses/rev quantises to 30 RPM, so correcting inside that
+                // band is chasing measurement noise.
+                if (fabsf(err) > 30.0f) {
+                  // 0.01 %/RPM: a 300 RPM error moves duty 3% per second.
+                  duty += 0.01f * err;
+                }
+              }
+              // Floor: a PC fan will not reliably start below ~15% duty and
+              // stalls below ~10%. Clamping here also serves as anti-windup,
+              // since the integrator can never accumulate outside the range
+              // the fan can actually deliver.
+              duty = std::max(15.0f, duty);
+            }
+            duty = std::min(100.0f, std::max(0.0f, duty));
+
+            int pct = (int) roundf(duty);
+            bool on = pct > 0;
+            // Only issue a call on change, or every tick would republish state.
+            if (f->state == on && f->speed == pct) {
+              return;
+            }
+            auto call = f->make_call();
+            call.set_state(on);
+            call.set_speed(pct);
+            call.perform();
+          };
+
+          drive(id(fan_1), id(fan1_rpm_low), id(fan1_rpm_high), frac,
+                id(fan_1_speed).state, id(fan1_target_rpm), id(fan1_duty));
+          drive(id(fan_2), id(fan2_rpm_low), id(fan2_rpm_high), frac,
+                id(fan_2_speed).state, id(fan2_target_rpm), id(fan2_duty));
+
+          // One line per tick with every input and output of the loop: if a fan
+          // sits at an unexpected speed, this says whether the cause is a rogue
+          // temperature channel, the setpoints, or the loop failing to settle.
+          ESP_LOGD("fan_curve",
+                   "T1=%.1f T2=%.1f T3=%.1f T4=%.1f -> max=%.1f [%.0f..%.0f] "
+                   "frac=%.2f | F1 %.0f/%.0f RPM %.1f%% | F2 %.0f/%.0f RPM %.1f%%",
+                   temps[0], temps[1], temps[2], temps[3], t,
+                   id(temp_low), id(temp_high), frac,
+                   id(fan_1_speed).state, id(fan1_target_rpm), id(fan1_duty),
+                   id(fan_2_speed).state, id(fan2_target_rpm), id(fan2_duty));
+
+# PWM Outputs
+output:
+  - platform: ledc
+    id: fan_1_pwm
+    # Inverted drive: 0% commanded = line held high, 100% = line held low
+    pin:
+      number: GPIO38
+      inverted: true
+    frequency: 25000Hz
+
+  - platform: ledc
+    id: fan_2_pwm
+    pin:
+      number: GPIO2
+      inverted: true
+    frequency: 25000Hz
+
+  - platform: ledc
+    id: led_1_output
+    pin: GPIO39
+
+  - platform: ledc
+    id: led_2_output
+    pin: GPIO40
+
+light:
+  - platform: monochromatic
+    id: led_1
+    name: "LED 1"
+    output: led_1_output
+
+  - platform: monochromatic
+    id: led_2
+    name: "LED 2"
+    output: led_2_output
+
+fan:
+  - platform: speed
+    id: fan_1
+    name: "Fan 1"
+    output: fan_1_pwm
+
+  - platform: speed
+    id: fan_2
+    name: "Fan 2"
+    output: fan_2_pwm
+
+# Menu settings exposed to Home Assistant.
+#
+# The setpoints live in globals, and a global is a plain C++ variable with no
+# entity behind it -- nothing to publish, so HA never sees one. These template
+# numbers are that missing entity layer: `lambda` reads the global, `set_action`
+# writes it, so the encoder menu and HA are two views of the same value rather
+# than two copies that drift.
+#
+# No `restore_value` here on purpose: the globals already persist, and a number
+# that restores would fire set_action during boot and fight them.
+number:
+  - platform: template
+    name: "Temp Low"
+    id: num_temp_low
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 20
+    max_value: 100
+    step: 1
+    # Poll rather than wait out the 60s default, so a knob turn on the device
+    # shows up in HA promptly.
+    update_interval: 5s
+    lambda: 'return id(temp_low);'
+    set_action:
+      # Same LOW < HIGH invariant the encoder menu enforces.
+      - lambda: 'id(temp_low) = std::min((float) x, id(temp_high) - 1.0f); global_preferences->sync();'
+      - component.update: oled_display
+      - script.execute: update_fans
+
+  - platform: template
+    name: "Temp High"
+    id: num_temp_high
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 20
+    max_value: 100
+    step: 1
+    update_interval: 5s
+    lambda: 'return id(temp_high);'
+    set_action:
+      - lambda: 'id(temp_high) = std::max((float) x, id(temp_low) + 1.0f); global_preferences->sync();'
+      - component.update: oled_display
+      - script.execute: update_fans
+
+  - platform: template
+    name: "Fan 1 RPM Low"
+    id: num_fan1_rpm_low
+    entity_category: config
+    unit_of_measurement: "RPM"
+    min_value: 0
+    max_value: 5000
+    step: 50
+    update_interval: 5s
+    lambda: 'return id(fan1_rpm_low);'
+    set_action:
+      - lambda: 'id(fan1_rpm_low) = std::min((float) x, id(fan1_rpm_high) - 50.0f); global_preferences->sync();'
+      - component.update: oled_display
+      - script.execute: update_fans
+
+  - platform: template
+    name: "Fan 1 RPM High"
+    id: num_fan1_rpm_high
+    entity_category: config
+    unit_of_measurement: "RPM"
+    min_value: 0
+    max_value: 5000
+    step: 50
+    update_interval: 5s
+    lambda: 'return id(fan1_rpm_high);'
+    set_action:
+      - lambda: 'id(fan1_rpm_high) = std::max((float) x, id(fan1_rpm_low) + 50.0f); global_preferences->sync();'
+      - component.update: oled_display
+      - script.execute: update_fans
+
+  - platform: template
+    name: "Fan 2 RPM Low"
+    id: num_fan2_rpm_low
+    entity_category: config
+    unit_of_measurement: "RPM"
+    min_value: 0
+    max_value: 5000
+    step: 50
+    update_interval: 5s
+    lambda: 'return id(fan2_rpm_low);'
+    set_action:
+      - lambda: 'id(fan2_rpm_low) = std::min((float) x, id(fan2_rpm_high) - 50.0f); global_preferences->sync();'
+      - component.update: oled_display
+      - script.execute: update_fans
+
+  - platform: template
+    name: "Fan 2 RPM High"
+    id: num_fan2_rpm_high
+    entity_category: config
+    unit_of_measurement: "RPM"
+    min_value: 0
+    max_value: 5000
+    step: 50
+    update_interval: 5s
+    lambda: 'return id(fan2_rpm_high);'
+    set_action:
+      - lambda: 'id(fan2_rpm_high) = std::max((float) x, id(fan2_rpm_low) + 50.0f); global_preferences->sync();'
+      - component.update: oled_display
+      - script.execute: update_fans
+
+# Sensors Setup
+sensor:
+  # INA3221 Power Monitor
+  - platform: ina3221
+    address: 0x40
+    # Channel 1: Power Input
+    channel_1:
+      bus_voltage:
+        name: "Power Input Voltage"
+        id: power_in_v
+      current:
+        name: "Power Input Current"
+        id: power_in_i
+      power:
+        name: "Power Input Power"
+        id: power_in_p
+    # Channel 2: 12V Output
+    channel_2:
+      bus_voltage:
+        name: "12V Output Voltage"
+        id: power_12v_v
+      current:
+        name: "12V Output Current"
+        id: power_12v_i
+      power:
+        name: "12V Output Power"
+        id: power_12v_p
+    # Channel 3: 5V Output
+    channel_3:
+      bus_voltage:
+        name: "5V Output Voltage"
+        id: power_5v_v
+      current:
+        name: "5V Output Current"
+        id: power_5v_i
+      power:
+        name: "5V Output Power"
+        id: power_5v_p
+
+  # Tachometers
+  - platform: pulse_counter
+    id: fan_1_speed
+    name: "Fan 1 Speed"
+    pin:
+      number: GPIO1
+      mode: INPUT_PULLUP
+    unit_of_measurement: "RPM"
+    update_interval: 1s
+    filters:
+      - multiply: 0.5
+
+  - platform: pulse_counter
+    id: fan_2_speed
+    name: "Fan 2 Speed"
+    pin:
+      number: GPIO41
+      mode: INPUT_PULLUP
+    unit_of_measurement: "RPM"
+    update_interval: 1s
+    filters:
+      - multiply: 0.5
+
+  # Rotary Encoder Logic
+  - platform: rotary_encoder
+    id: rotary_enc
+    name: "Rotary Encoder"
+    pin_a:
+      number: GPIO16
+      mode: INPUT_PULLUP
+    pin_b:
+      number: GPIO17
+      mode: INPUT_PULLUP
+    on_clockwise:
+      - lambda: |-
+          if (id(active_screen) == 4) {
+            if (!id(edit_mode)) {
+              id(menu_index) = (id(menu_index) + 1) % 6;
+            } else {
+              switch (id(menu_index)) {
+                // Raising a LOW pushes it up against its HIGH; the HIGH itself
+                // is free to rise to the ceiling. RPM steps by 50.
+                case 0: id(temp_low) = std::min(id(temp_high) - 1.0f, std::min(100.0f, id(temp_low) + 1.0f)); break;
+                case 1: id(temp_high) = std::min(100.0f, id(temp_high) + 1.0f); break;
+                case 2: id(fan1_rpm_low) = std::min(id(fan1_rpm_high) - 50.0f, std::min(5000.0f, id(fan1_rpm_low) + 50.0f)); break;
+                case 3: id(fan1_rpm_high) = std::min(5000.0f, id(fan1_rpm_high) + 50.0f); break;
+                case 4: id(fan2_rpm_low) = std::min(id(fan2_rpm_high) - 50.0f, std::min(5000.0f, id(fan2_rpm_low) + 50.0f)); break;
+                case 5: id(fan2_rpm_high) = std::min(5000.0f, id(fan2_rpm_high) + 50.0f); break;
+              }
+            }
+          }
+      # Repaint now instead of waiting for the next update_interval tick.
+      - component.update: oled_display
+      - script.execute: update_fans
+    on_anticlockwise:
+      - lambda: |-
+          if (id(active_screen) == 4) {
+            if (!id(edit_mode)) {
+              id(menu_index) = (id(menu_index) + 5) % 6;
+            } else {
+              switch (id(menu_index)) {
+                // Mirror of the clockwise case: lowering a HIGH pushes it down
+                // against its LOW, so LOW < HIGH holds from either direction.
+                case 0: id(temp_low) = std::max(20.0f, id(temp_low) - 1.0f); break;
+                case 1: id(temp_high) = std::max(id(temp_low) + 1.0f, std::max(20.0f, id(temp_high) - 1.0f)); break;
+                case 2: id(fan1_rpm_low) = std::max(0.0f, id(fan1_rpm_low) - 50.0f); break;
+                case 3: id(fan1_rpm_high) = std::max(id(fan1_rpm_low) + 50.0f, std::max(0.0f, id(fan1_rpm_high) - 50.0f)); break;
+                case 4: id(fan2_rpm_low) = std::max(0.0f, id(fan2_rpm_low) - 50.0f); break;
+                case 5: id(fan2_rpm_high) = std::max(id(fan2_rpm_low) + 50.0f, std::max(0.0f, id(fan2_rpm_high) - 50.0f)); break;
+              }
+            }
+          }
+      - component.update: oled_display
+      - script.execute: update_fans
+
+  # Temperature Inputs: 100K NTC thermistors on ADS1115 A0..A3.
+  #
+  #   3V3 --[ 100K 1% ]--+-- ADS1115 Ax
+  #                      |
+  #                     NTC 100K
+  #                      |
+  #                     GND
+  #
+  # The NTC sits between the ADC node and ground, so it is the DOWNSTREAM leg
+  # of the divider. At 25C both legs are 100K, giving ~1.65V; the node swings
+  # towards 0V as the thermistor heats up. gain 4.096 is the smallest ADS1115
+  # range that still spans the full 0..3.3V rail.
+  - platform: ads1115
+    id: temp_1_volt
+    multiplexer: 'A0_GND'
+    gain: 4.096
+    update_interval: 1s
+    internal: true
+    filters:
+      # Sliding median: sample at 1s and publish every sample, but as the median
+      # of the last 5. Keeps a 1s temperature cadence matched to the fan curve's
+      # 1s tick while still rejecting single-sample ADC noise and mains pickup.
+      - median:
+          window_size: 5
+          send_every: 1
+  - platform: resistance
+    id: temp_1_res
+    sensor: temp_1_volt
+    configuration: DOWNSTREAM
+    resistor: 100kOhm
+    reference_voltage: 3.3V
+    internal: true
+  - platform: ntc
+    id: temp_1
+    name: "Temp 1"
+    sensor: temp_1_res
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 100kOhm
+
+  - platform: ads1115
+    id: temp_2_volt
+    multiplexer: 'A1_GND'
+    gain: 4.096
+    update_interval: 1s
+    internal: true
+    filters:
+      # Sliding median: sample at 1s and publish every sample, but as the median
+      # of the last 5. Keeps a 1s temperature cadence matched to the fan curve's
+      # 1s tick while still rejecting single-sample ADC noise and mains pickup.
+      - median:
+          window_size: 5
+          send_every: 1
+  - platform: resistance
+    id: temp_2_res
+    sensor: temp_2_volt
+    configuration: DOWNSTREAM
+    resistor: 100kOhm
+    reference_voltage: 3.3V
+    internal: true
+  - platform: ntc
+    id: temp_2
+    name: "Temp 2"
+    sensor: temp_2_res
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 100kOhm
+
+  - platform: ads1115
+    id: temp_3_volt
+    multiplexer: 'A2_GND'
+    gain: 4.096
+    update_interval: 1s
+    internal: true
+    filters:
+      # Sliding median: sample at 1s and publish every sample, but as the median
+      # of the last 5. Keeps a 1s temperature cadence matched to the fan curve's
+      # 1s tick while still rejecting single-sample ADC noise and mains pickup.
+      - median:
+          window_size: 5
+          send_every: 1
+  - platform: resistance
+    id: temp_3_res
+    sensor: temp_3_volt
+    configuration: DOWNSTREAM
+    resistor: 100kOhm
+    reference_voltage: 3.3V
+    internal: true
+  - platform: ntc
+    id: temp_3
+    name: "Temp 3"
+    sensor: temp_3_res
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 100kOhm
+
+  - platform: ads1115
+    id: temp_4_volt
+    multiplexer: 'A3_GND'
+    gain: 4.096
+    update_interval: 1s
+    internal: true
+    filters:
+      # Sliding median: sample at 1s and publish every sample, but as the median
+      # of the last 5. Keeps a 1s temperature cadence matched to the fan curve's
+      # 1s tick while still rejecting single-sample ADC noise and mains pickup.
+      - median:
+          window_size: 5
+          send_every: 1
+  - platform: resistance
+    id: temp_4_res
+    sensor: temp_4_volt
+    configuration: DOWNSTREAM
+    resistor: 100kOhm
+    reference_voltage: 3.3V
+    internal: true
+  - platform: ntc
+    id: temp_4
+    name: "Temp 4"
+    sensor: temp_4_res
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 100kOhm
+
+# Push Buttons
+binary_sensor:
+  - platform: gpio
+    id: encoder_switch
+    name: "Encoder Switch"
+    pin:
+      number: GPIO15
+      mode: INPUT_PULLUP
+      inverted: true
+    # Short press: enter menu / toggle edit. Hold: leave the menu.
+    on_click:
+      - min_length: 30ms
+        max_length: 800ms
+        then:
+          - lambda: |-
+              if (id(active_screen) != 4) {
+                id(active_screen) = 4;
+                id(edit_mode) = false;
+              } else {
+                id(edit_mode) = !id(edit_mode);
+                // Leaving edit mode commits the value to flash immediately.
+                if (!id(edit_mode)) {
+                  global_preferences->sync();
+                }
+              }
+          - component.update: oled_display
+      - min_length: 800ms
+        max_length: 4000ms
+        then:
+          - lambda: |-
+              id(active_screen) = 0;
+              id(edit_mode) = false;
+              global_preferences->sync();
+          - component.update: oled_display
+
+  - platform: gpio
+    id: button_1
+    pin: { number: GPIO18, mode: INPUT_PULLUP, inverted: true }
+    on_press:
+      - lambda: 'id(active_screen) = 0; id(edit_mode) = false;'
+      - component.update: oled_display
+
+  - platform: gpio
+    id: button_2
+    pin: { number: GPIO21, mode: INPUT_PULLUP, inverted: true }
+    on_press:
+      - lambda: 'id(active_screen) = 1; id(edit_mode) = false;'
+      - component.update: oled_display
+
+  - platform: gpio
+    id: button_3
+    pin: { number: GPIO47, mode: INPUT_PULLUP, inverted: true }
+    on_press:
+      - lambda: 'id(active_screen) = 2; id(edit_mode) = false;'
+      - component.update: oled_display
+
+  - platform: gpio
+    id: button_4
+    pin: { number: GPIO48, mode: INPUT_PULLUP, inverted: true }
+    on_press:
+      - lambda: 'id(active_screen) = 3; id(edit_mode) = false;'
+      - component.update: oled_display
+
+font:
+  # X11 "misc-fixed" 6x10 bitmap font: 6px advance, 10px line height.
+  # 128x64 panel => 21 chars x 6 lines. No size: — bitmap fonts render 1:1.
+  - file: "fonts/6x10.bdf"
+    id: font_main
+    glyphs: "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~ "
+
+# Display Rendering Engine
+display:
+  - platform: ssd1306_i2c
+    id: oled_display
+    model: "SSD1306 128x64"
+    address: 0x3C
+    lambda: |-
+      auto draw_gauge = [&it](int x, int y, int width, int height, int pct) {
+        it.rectangle(x, y, width, height);
+        int fill_width = ((width - 4) * pct) / 100;
+        if (fill_width > 0) {
+          it.filled_rectangle(x + 2, y + 2, fill_width, height - 4);
+        }
+      };
+
+      // Rotor: ring housing, hub, and 3 swept blades at 120deg spacing.
+      auto draw_rotor = [&it](int cx, int cy, int r, float angle_deg) {
+        it.circle(cx, cy, r);
+        it.filled_circle(cx, cy, 2);
+        for (int b = 0; b < 3; b++) {
+          float a = (angle_deg + b * 120.0f) * (float) M_PI / 180.0f;
+          float sweep = a + 0.45f;  // trailing edge, gives the blade a shape
+          int hx = cx + (int) roundf(cosf(a) * 3.0f);
+          int hy = cy + (int) roundf(sinf(a) * 3.0f);
+          int tx = cx + (int) roundf(cosf(a) * (r - 2));
+          int ty = cy + (int) roundf(sinf(a) * (r - 2));
+          int sx = cx + (int) roundf(cosf(sweep) * (r - 4));
+          int sy = cy + (int) roundf(sinf(sweep) * (r - 4));
+          it.line(hx, hy, tx, ty);
+          it.line(tx, ty, sx, sy);
+          it.line(sx, sy, hx, hy);
+        }
+      };
+
+      if (id(active_screen) == 0) {
+        // Skip unread probes: before the first ADC conversion every sensor is
+        // NaN, and one NaN would poison a plain 4-way average.
+        float t_all[4] = {
+          id(temp_1).state, id(temp_2).state,
+          id(temp_3).state, id(temp_4).state
+        };
+        float t_sum = 0.0f;
+        int t_n = 0;
+        for (int i = 0; i < 4; i++) {
+          if (!std::isnan(t_all[i])) { t_sum += t_all[i]; t_n++; }
+        }
+        float avg_temp = t_n ? (t_sum / t_n) : NAN;
+
+        // 21 chars per line at 6px: two temps per row, average right-aligned.
+        it.printf(0, 0, id(font_main), "T1:%.1f T2:%.1f", id(temp_1).state, id(temp_2).state);
+        it.printf(0, 10, id(font_main), "T3:%.1f T4:%.1f", id(temp_3).state, id(temp_4).state);
+        it.printf(92, 10, id(font_main), "A:%.1f", avg_temp);
+
+        int f1_pct = id(fan_1).state ? id(fan_1).speed : 0;
+        int f2_pct = id(fan_2).state ? id(fan_2).speed : 0;
+
+        // Gauges stop at x=102 to leave the right edge for the rotors.
+        it.printf(0, 22, id(font_main), "F1:%3d%%", f1_pct);
+        draw_gauge(46, 22, 56, 10, f1_pct);
+        // "RPM:actual-target" -- 13 chars at 6px ends at x=78, clear of the
+        // rotor which starts at x=104.
+        it.printf(0, 32, id(font_main), "RPM:%4.0f-%4.0f",
+                  id(fan_1_speed).state, id(fan1_target_rpm));
+        draw_rotor(113, 31, 9, id(fan1_angle));
+
+        it.printf(0, 44, id(font_main), "F2:%3d%%", f2_pct);
+        draw_gauge(46, 44, 56, 10, f2_pct);
+        it.printf(0, 54, id(font_main), "RPM:%4.0f-%4.0f",
+                  id(fan_2_speed).state, id(fan2_target_rpm));
+        draw_rotor(113, 53, 9, id(fan2_angle));
+      }
+      else if (id(active_screen) == 1) {
+        it.print(0, 0, id(font_main), "-- POWER INPUT --");
+        it.printf(0, 16, id(font_main), "Voltage : %6.2f V", id(power_in_v).state);
+        it.printf(0, 32, id(font_main), "Current : %6.2f A", id(power_in_i).state);
+        it.printf(0, 48, id(font_main), "Power   : %6.2f W", id(power_in_p).state);
+      }
+      else if (id(active_screen) == 2) {
+        it.print(0, 0, id(font_main), "-- OUTPUT 12V --");
+        it.printf(0, 16, id(font_main), "Voltage : %6.2f V", id(power_12v_v).state);
+        it.printf(0, 32, id(font_main), "Current : %6.2f A", id(power_12v_i).state);
+        it.printf(0, 48, id(font_main), "Power   : %6.2f W", id(power_12v_p).state);
+      }
+      else if (id(active_screen) == 3) {
+        it.print(0, 0, id(font_main), "-- OUTPUT 5V --");
+        it.printf(0, 16, id(font_main), "Voltage : %6.2f V", id(power_5v_v).state);
+        it.printf(0, 32, id(font_main), "Current : %6.2f A", id(power_5v_i).state);
+        it.printf(0, 48, id(font_main), "Power   : %6.2f W", id(power_5v_p).state);
+      }
+      else if (id(active_screen) == 4) {
+        it.printf(0, 0, id(font_main), "MENU %-3s   HOLD=EXIT", id(edit_mode) ? "EDT" : "SEL");
+
+        const char *labels[6] = {
+          "TEMP LOW", "TEMP HIGH",
+          "FAN1 RPM LOW", "FAN1 RPM HIGH",
+          "FAN2 RPM LOW", "FAN2 RPM HIGH"
+        };
+
+        float values[6] = {
+          id(temp_low), id(temp_high),
+          id(fan1_rpm_low), id(fan1_rpm_high),
+          id(fan2_rpm_low), id(fan2_rpm_high)
+        };
+
+        // 6x10 fits 5 of the 6 items below the title: slide the window by one
+        // so the selected item is always visible.
+        int top_idx = id(menu_index) - 4;
+        if (top_idx < 0) top_idx = 0;
+
+        for (int i = 0; i < 5; i++) {
+          int idx = top_idx + i;
+          int y = 12 + (i * 10);
+
+          char prefix = (idx == id(menu_index)) ? '>' : ' ';
+          if (idx == id(menu_index) && id(edit_mode)) prefix = '*';
+
+          // Both forms are 19 chars, inside the 21 the 6x10 font allows.
+          if (idx <= 1) {
+            it.printf(0, y, id(font_main), "%c%-13s:%3.0fC", prefix, labels[idx], values[idx]);
+          } else {
+            it.printf(0, y, id(font_main), "%c%-13s:%4.0f", prefix, labels[idx], values[idx]);
+          }
+        }
+      }
