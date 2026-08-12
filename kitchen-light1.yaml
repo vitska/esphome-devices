@@ -4,9 +4,15 @@ substitutions:
 esphome:
   name: kitchen-light1
   friendly_name: kitchen-light1
+  on_boot:
+    priority: -10
+    then:
+      - delay: 2s
+      - script.execute: apply_template
 
 esp8266:
   board: d1_mini
+  restore_from_flash: true
 
 # Enable logging
 logger:
@@ -30,7 +36,17 @@ wifi:
     password: !secret ap.kitchen-light1
 
 captive_portal:
-    
+
+globals:
+  # Active template: 0=Night, 1=Day, 2=Custom
+  - id: active_template
+    type: int
+    restore_value: true
+    initial_value: '1'
+  - id: template_switching
+    type: bool
+    initial_value: 'true'
+
 i2c:
   sda: 4
   scl: 5
@@ -38,7 +54,6 @@ i2c:
   id: bus_a
   frequency: 400kHz
 
-# Example configuration entry
 pca9685:
   - id: pca9685_hub1
     frequency: 500
@@ -77,7 +92,7 @@ output:
     pca9685_id: 'pca9685_hub1'
     channel: 7
     id: pwm7
-  
+
 light:
   - platform: monochromatic
     id: led0
@@ -85,6 +100,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm0
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led0).current_values.is_on()) return;
+            float c = id(led0).current_values.get_brightness();
+            if (fabs(c - id(led0).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led0).state : (at == 1) ? id(day_led0).state : id(custom_led0).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led0).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led0).make_call().set_value(val).perform();
+            else id(custom_led0).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -95,6 +123,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm1
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led1).current_values.is_on()) return;
+            float c = id(led1).current_values.get_brightness();
+            if (fabs(c - id(led1).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led1).state : (at == 1) ? id(day_led1).state : id(custom_led1).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led1).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led1).make_call().set_value(val).perform();
+            else id(custom_led1).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -105,6 +146,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm2
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led2).current_values.is_on()) return;
+            float c = id(led2).current_values.get_brightness();
+            if (fabs(c - id(led2).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led2).state : (at == 1) ? id(day_led2).state : id(custom_led2).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led2).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led2).make_call().set_value(val).perform();
+            else id(custom_led2).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -115,6 +169,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm3
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led3).current_values.is_on()) return;
+            float c = id(led3).current_values.get_brightness();
+            if (fabs(c - id(led3).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led3).state : (at == 1) ? id(day_led3).state : id(custom_led3).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led3).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led3).make_call().set_value(val).perform();
+            else id(custom_led3).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -125,6 +192,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm4
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led4).current_values.is_on()) return;
+            float c = id(led4).current_values.get_brightness();
+            if (fabs(c - id(led4).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led4).state : (at == 1) ? id(day_led4).state : id(custom_led4).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led4).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led4).make_call().set_value(val).perform();
+            else id(custom_led4).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -135,6 +215,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm5
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led5).current_values.is_on()) return;
+            float c = id(led5).current_values.get_brightness();
+            if (fabs(c - id(led5).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led5).state : (at == 1) ? id(day_led5).state : id(custom_led5).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led5).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led5).make_call().set_value(val).perform();
+            else id(custom_led5).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -145,6 +238,19 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm6
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led6).current_values.is_on()) return;
+            float c = id(led6).current_values.get_brightness();
+            if (fabs(c - id(led6).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led6).state : (at == 1) ? id(day_led6).state : id(custom_led6).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led6).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led6).make_call().set_value(val).perform();
+            else id(custom_led6).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
@@ -155,11 +261,456 @@ light:
     restore_mode: RESTORE_DEFAULT_ON
     output: pwm7
     default_transition_length: 5s
+    on_state:
+      then:
+        - lambda: |-
+            if (id(template_switching) || !id(led7).current_values.is_on()) return;
+            float c = id(led7).current_values.get_brightness();
+            if (fabs(c - id(led7).remote_values.get_brightness()) > 0.004f) return;
+            int val = (int)(c * 255.0f + 0.5f);
+            int at = id(active_template);
+            float nv = (at == 0) ? id(night_led7).state : (at == 1) ? id(day_led7).state : id(custom_led7).state;
+            if (!isnan(nv) && abs(val - (int)(nv + 0.5f)) <= 1) return;
+            if (at == 0) id(night_led7).make_call().set_value(val).perform();
+            else if (at == 1) id(day_led7).make_call().set_value(val).perform();
+            else id(custom_led7).make_call().set_value(val).perform();
     effects:
       - random:
           transition_length: 5s
           update_interval: 5s
 
+# Template brightness values (0-255) — visible and writable from HA
+number:
+  # Night template (~10%)
+  - platform: template
+    name: "Night LED0"
+    id: night_led0
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led0).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED1"
+    id: night_led1
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led1).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED2"
+    id: night_led2
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led2).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED3"
+    id: night_led3
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led3).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED4"
+    id: night_led4
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led4).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED5"
+    id: night_led5
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led5).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED6"
+    id: night_led6
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led6).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Night LED7"
+    id: night_led7
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 26
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 0) {
+            auto call = id(led7).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  # Day template (~90%)
+  - platform: template
+    name: "Day LED0"
+    id: day_led0
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led0).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED1"
+    id: day_led1
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led1).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED2"
+    id: day_led2
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led2).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED3"
+    id: day_led3
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led3).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED4"
+    id: day_led4
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led4).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED5"
+    id: day_led5
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led5).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED6"
+    id: day_led6
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led6).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Day LED7"
+    id: day_led7
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 230
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 1) {
+            auto call = id(led7).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  # Custom template (~50%)
+  - platform: template
+    name: "Custom LED0"
+    id: custom_led0
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led0).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED1"
+    id: custom_led1
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led1).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED2"
+    id: custom_led2
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led2).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED3"
+    id: custom_led3
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led3).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED4"
+    id: custom_led4
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led4).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED5"
+    id: custom_led5
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led5).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED6"
+    id: custom_led6
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led6).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+  - platform: template
+    name: "Custom LED7"
+    id: custom_led7
+    min_value: 0
+    max_value: 255
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 128
+    set_action:
+      - lambda: |-
+          if (!id(template_switching) && id(active_template) == 2) {
+            auto call = id(led7).turn_on(); call.set_brightness(x / 255.0f); call.perform();
+          }
+
+select:
+  - platform: template
+    name: "Active Template"
+    id: active_template_select
+    optimistic: true
+    restore_value: true
+    initial_option: "Day"
+    options:
+      - "Night"
+      - "Day"
+      - "Custom"
+    set_action:
+      - lambda: |-
+          if (x == "Night") id(active_template) = 0;
+          else if (x == "Day") id(active_template) = 1;
+          else id(active_template) = 2;
+          global_preferences->sync();
+      - script.execute: apply_template
+
+script:
+  - id: apply_template
+    mode: restart
+    then:
+      - lambda: 'id(template_switching) = true;'
+      - light.turn_on:
+          id: led0
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led0).state;
+            else if (id(active_template)==1) v=id(day_led0).state;
+            else v=id(custom_led0).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led1
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led1).state;
+            else if (id(active_template)==1) v=id(day_led1).state;
+            else v=id(custom_led1).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led2
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led2).state;
+            else if (id(active_template)==1) v=id(day_led2).state;
+            else v=id(custom_led2).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led3
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led3).state;
+            else if (id(active_template)==1) v=id(day_led3).state;
+            else v=id(custom_led3).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led4
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led4).state;
+            else if (id(active_template)==1) v=id(day_led4).state;
+            else v=id(custom_led4).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led5
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led5).state;
+            else if (id(active_template)==1) v=id(day_led5).state;
+            else v=id(custom_led5).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led6
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led6).state;
+            else if (id(active_template)==1) v=id(day_led6).state;
+            else v=id(custom_led6).state;
+            return v / 255.0f;
+      - light.turn_on:
+          id: led7
+          brightness: !lambda |-
+            float v;
+            if (id(active_template)==0) v=id(night_led7).state;
+            else if (id(active_template)==1) v=id(day_led7).state;
+            else v=id(custom_led7).state;
+            return v / 255.0f;
+      - delay: 6s
+      - lambda: 'id(template_switching) = false;'
 
 text_sensor:
   - platform: wifi_info
