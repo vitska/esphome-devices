@@ -235,7 +235,25 @@ script:
   - id: adjust_all
     mode: single
     then:
-      - lambda: 'id(apply_idx) = 0;'
+      - lambda: |-
+          int step = id(all_step);
+          int* n[] = {&id(night_led0), &id(night_led1), &id(night_led2), &id(night_led3),
+                      &id(night_led4), &id(night_led5), &id(night_led6), &id(night_led7)};
+          int* d[] = {&id(day_led0), &id(day_led1), &id(day_led2), &id(day_led3),
+                      &id(day_led4), &id(day_led5), &id(day_led6), &id(day_led7)};
+          int* c[] = {&id(custom_led0), &id(custom_led1), &id(custom_led2), &id(custom_led3),
+                      &id(custom_led4), &id(custom_led5), &id(custom_led6), &id(custom_led7)};
+          int** tpl;
+          if (id(active_template) == 0) tpl = n;
+          else if (id(active_template) == 1) tpl = d;
+          else tpl = c;
+          for (int i = 0; i < 8; i++) {
+            int val = *tpl[i] + step;
+            if (val > 255) val = 255;
+            if (val < 0) val = 0;
+            *tpl[i] = val;
+          }
+          id(apply_idx) = 0;
       - repeat:
           count: 8
           then:
@@ -243,22 +261,59 @@ script:
                 service: light.turn_on
                 data_template:
                   entity_id: "light.kitchen_light1_led{{ ch }}"
-                  brightness_step: "{{ step_val }}"
+                  brightness: "{{ brightness_val }}"
                 variables:
                   ch: !lambda 'return id(apply_idx);'
-                  step_val: !lambda 'return id(all_step);'
+                  brightness_val: !lambda |-
+                    int i = id(apply_idx);
+                    int* n[] = {&id(night_led0), &id(night_led1), &id(night_led2), &id(night_led3),
+                                &id(night_led4), &id(night_led5), &id(night_led6), &id(night_led7)};
+                    int* d[] = {&id(day_led0), &id(day_led1), &id(day_led2), &id(day_led3),
+                                &id(day_led4), &id(day_led5), &id(day_led6), &id(day_led7)};
+                    int* c[] = {&id(custom_led0), &id(custom_led1), &id(custom_led2), &id(custom_led3),
+                                &id(custom_led4), &id(custom_led5), &id(custom_led6), &id(custom_led7)};
+                    if (id(active_template) == 0) return *n[i];
+                    if (id(active_template) == 1) return *d[i];
+                    return *c[i];
             - lambda: 'id(apply_idx) += 1;'
   - id: adjust_channel
     mode: single
     then:
+      - lambda: |-
+          int ch = id(ch_num);
+          int step = id(ch_step);
+          int* n[] = {&id(night_led0), &id(night_led1), &id(night_led2), &id(night_led3),
+                      &id(night_led4), &id(night_led5), &id(night_led6), &id(night_led7)};
+          int* d[] = {&id(day_led0), &id(day_led1), &id(day_led2), &id(day_led3),
+                      &id(day_led4), &id(day_led5), &id(day_led6), &id(day_led7)};
+          int* c[] = {&id(custom_led0), &id(custom_led1), &id(custom_led2), &id(custom_led3),
+                      &id(custom_led4), &id(custom_led5), &id(custom_led6), &id(custom_led7)};
+          int** tpl;
+          if (id(active_template) == 0) tpl = n;
+          else if (id(active_template) == 1) tpl = d;
+          else tpl = c;
+          int val = *tpl[ch] + step;
+          if (val > 255) val = 255;
+          if (val < 0) val = 0;
+          *tpl[ch] = val;
       - homeassistant.service:
           service: light.turn_on
           data_template:
             entity_id: "light.kitchen_light1_led{{ ch }}"
-            brightness_step: "{{ step_val }}"
+            brightness: "{{ brightness_val }}"
           variables:
             ch: !lambda 'return id(ch_num);'
-            step_val: !lambda 'return id(ch_step);'
+            brightness_val: !lambda |-
+              int ch = id(ch_num);
+              int* n[] = {&id(night_led0), &id(night_led1), &id(night_led2), &id(night_led3),
+                          &id(night_led4), &id(night_led5), &id(night_led6), &id(night_led7)};
+              int* d[] = {&id(day_led0), &id(day_led1), &id(day_led2), &id(day_led3),
+                          &id(day_led4), &id(day_led5), &id(day_led6), &id(day_led7)};
+              int* c[] = {&id(custom_led0), &id(custom_led1), &id(custom_led2), &id(custom_led3),
+                          &id(custom_led4), &id(custom_led5), &id(custom_led6), &id(custom_led7)};
+              if (id(active_template) == 0) return *n[ch];
+              if (id(active_template) == 1) return *d[ch];
+              return *c[ch];
 
 font:
   - file: "fonts/Tamzen7x13r.bdf"
