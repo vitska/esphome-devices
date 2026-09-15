@@ -1,0 +1,311 @@
+esphome:
+  name: wt32-s1-wind-station
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.wind-station
+
+ota:
+  - platform: esphome
+    password: !secret ota.wind-station
+
+# LAN8720 PHY configuration for WT32-ETH01 V1.4
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk:
+    pin: GPIO0
+    mode: CLK_EXT_IN
+  phy_addr: 1
+  power_pin: GPIO16
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "Ethernet IP Address"
+    mac_address:
+      name: "Ethernet MAC Address"
+
+  # 16-point compass code (N, NNE, NE, ... NNW), published by publish_wind_direction
+  - platform: template
+    name: "Wind Direction Cardinal"
+    id: wind_direction_cardinal
+    icon: "mdi:compass-outline"
+    # Published by publish_wind_direction, never polled
+    update_interval: never
+
+web_server:
+  port: 80
+
+# Single physical I2C bus on IO32/IO33
+i2c:
+  id: bus_main
+  sda: GPIO32
+  scl: GPIO33
+  scan: true
+  frequency: 200kHz
+
+# TCA9548A Multiplexer mapping channels
+tca9548a:
+  - id: tca_hub
+    i2c_id: bus_main
+    address: 0x70
+    channels:
+      - bus_id: bus_vane
+        channel: 0
+      - bus_id: bus_anemometer
+        channel: 1
+
+# AS5600 Hub instances connected to multiplexer channels
+as5600:
+  - id: wind_vane_hub
+    i2c_id: bus_vane
+
+  - id: anemometer_hub
+    i2c_id: bus_anemometer
+
+globals:
+  # Last raw anemometer count, -1 = not yet sampled
+  - id: anem_last_raw
+    type: int
+    restore_value: false
+    initial_value: '-1'
+  # Signed counts accumulated since the last RPM calculation
+  - id: anem_accum
+    type: float
+    restore_value: false
+    initial_value: '0.0'
+  # millis() of the last RPM calculation
+  - id: anem_last_calc_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  # Circular mean accumulators for the 5s wind direction average
+  - id: dir_sin_accum
+    type: float
+    restore_value: false
+    initial_value: '0.0'
+  - id: dir_cos_accum
+    type: float
+    restore_value: false
+    initial_value: '0.0'
+  - id: dir_sample_count
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
+# Non-volatile calibration parameters (stored in NVS, survive power cycles)
+number:
+  - platform: template
+    name: "Wind Direction Offset"
+    id: dir_offset
+    unit_of_measurement: "°"
+    min_value: 0
+    max_value: 359
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    mode: box
+    entity_category: config
+    on_value:
+      then:
+        - script.execute: publish_wind_direction
+
+switch:
+  - platform: template
+    name: "Wind Direction Reverse"
+    id: dir_reverse
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_on:
+      - script.execute: publish_wind_direction
+    on_turn_off:
+      - script.execute: publish_wind_direction
+
+# Recomputes and publishes the wind direction as soon as any input changes
+script:
+  - id: publish_wind_direction
+    mode: single
+    then:
+      - lambda: |-
+          float raw = id(raw_vane_position).state;
+          if (std::isnan(raw)) return;
+          // 12-bit count -> degrees
+          float deg = raw * (360.0f / 4096.0f);
+          if (id(dir_reverse).state) deg = 360.0f - deg;
+          deg -= id(dir_offset).state;
+          deg = fmodf(deg, 360.0f);
+          if (deg < 0.0f) deg += 360.0f;
+          id(wind_direction).publish_state(deg);
+          // Accumulate for the 5s circular mean (averaging degrees directly
+          // breaks near North, e.g. 350°/10° should average to 0°, not 180°)
+          float rad = deg * (M_PI / 180.0f);
+          id(dir_sin_accum) += sinf(rad);
+          id(dir_cos_accum) += cosf(rad);
+          id(dir_sample_count) += 1;
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+
+  - platform: bme280_i2c
+    i2c_id: bus_main
+    address: 0x76
+    update_interval: 60s
+    temperature:
+      name: "Temperature"
+    humidity:
+      name: "Humidity"
+    pressure:
+      name: "Pressure"
+
+  # Wind Vane Position Sensor — raw 12-bit count (0..4095), internal only,
+  # used solely to compute Wind Direction / Wind Direction Cardinal
+  - platform: as5600
+    id: wind_vane_angle
+    internal: true
+    as5600_id: wind_vane_hub
+    update_interval: 50ms
+    raw_position:
+      id: raw_vane_position
+      internal: true
+      on_value:
+        then:
+          - script.execute: publish_wind_direction
+
+  # Anemometer Position Sensor — raw 12-bit count (0..4095), internal only,
+  # used solely to compute Anemometer RPM
+  # 50ms sampling keeps rotation unambiguous up to ~600 RPM
+  - platform: as5600
+    id: anemometer_angle
+    internal: true
+    as5600_id: anemometer_hub
+    update_interval: 100ms
+    raw_position:
+      id: raw_rpm_angle
+      internal: true
+      on_value:
+        then:
+          - lambda: |-
+              int cur = (int) x;
+              if (id(anem_last_raw) < 0) {
+                id(anem_last_raw) = cur;
+                return;
+              }
+              // Shortest-path delta across the 4096-count wrap
+              int delta = cur - id(anem_last_raw);
+              if (delta > 2048) delta -= 4096;
+              if (delta < -2048) delta += 4096;
+              id(anem_last_raw) = cur;
+              id(anem_accum) += (float) delta;
+
+  # Wind direction in degrees, offset- and reverse-corrected
+  - platform: template
+    name: "Wind Direction"
+    id: wind_direction
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    icon: "mdi:compass-outline"
+    # Published by publish_wind_direction, never polled
+    update_interval: never
+    filters:
+      # Suppress republishing sensor noise, but pass any real movement through
+      - delta: 0.5
+
+  # Wind direction averaged (circular mean) over a 5s window
+  - platform: template
+    name: "Wind Direction Avg 5s"
+    id: wind_direction_avg_5s
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    icon: "mdi:compass-outline"
+    update_interval: 5s
+    lambda: |-
+      if (id(dir_sample_count) == 0) return NAN;
+      float deg = atan2f(id(dir_sin_accum), id(dir_cos_accum)) * (180.0f / M_PI);
+      if (deg < 0.0f) deg += 360.0f;
+      id(dir_sin_accum) = 0.0f;
+      id(dir_cos_accum) = 0.0f;
+      id(dir_sample_count) = 0;
+      // 16-point compass rose, each sector 22.5° wide
+      static const char *POINTS[16] = {
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+      };
+      int idx = (int) roundf(deg / 22.5f) % 16;
+      id(wind_direction_cardinal).publish_state(POINTS[idx]);
+      return deg;
+
+  # Anemometer speed from accumulated counts over the elapsed interval
+  - platform: template
+    name: "Anemometer RPM"
+    id: anemometer_rpm
+    unit_of_measurement: "RPM"
+    accuracy_decimals: 1
+    icon: "mdi:fan"
+    update_interval: 500ms
+    lambda: |-
+      uint32_t now = millis();
+      if (id(anem_last_calc_ms) == 0) {
+        id(anem_last_calc_ms) = now;
+        id(anem_accum) = 0.0f;
+        return NAN;
+      }
+      float dt = (now - id(anem_last_calc_ms)) / 1000.0f;
+      id(anem_last_calc_ms) = now;
+      if (dt <= 0.0f) return NAN;
+      float revs = fabsf(id(anem_accum)) / 4096.0f;
+      id(anem_accum) = 0.0f;
+      return revs / dt * 60.0f;
+    filters:
+      - clamp:
+          min_value: 0
+
+  # 30s wind gust — max of Wind Speed over a 30-sample (1s * 30 = 30s) window
+  - platform: template
+    name: "Wind Gust 30s"
+    id: wind_gust_30s
+    unit_of_measurement: "m/s"
+    accuracy_decimals: 2
+    icon: "mdi:weather-windy-variant"
+    device_class: wind_speed
+    state_class: measurement
+    update_interval: 500ms
+    lambda: |-
+      return id(wind_speed).state;
+    filters:
+      - max:
+          window_size: 30
+          send_every: 1
+          send_first_at: 1
+
+  # Wind speed derived from anemometer RPM via power-law calibration: V = a * RPM^b
+  # Placeholder coefficients (a=0.0056, b=1.0) — tune against a reference anemometer
+  - platform: template
+    name: "Wind Speed"
+    id: wind_speed
+    unit_of_measurement: "m/s"
+    accuracy_decimals: 2
+    icon: "mdi:weather-windy"
+    device_class: wind_speed
+    state_class: measurement
+    update_interval: 500ms
+    lambda: |-
+      float rpm = id(anemometer_rpm).state;
+      if (std::isnan(rpm)) return NAN;
+      return 0.022f * rpm;
+    filters:
+      - clamp:
+          min_value: 0
