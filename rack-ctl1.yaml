@@ -8,6 +8,8 @@ esphome:
     then:
       - lambda: |-
           id(active_screen) = 0;
+      - delay: 5s
+      - lambda: 'id(lamp_test) = false;'
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -70,6 +72,13 @@ globals:
   - id: fan2_angle
     type: float
     initial_value: '0.0'
+
+  # Diagnostic: both indicators are held solid for the first 5s after boot,
+  # regardless of tachometer, so "the pin never drives" can be told apart from
+  # "the LED circuit does not conduct" without a scope.
+  - id: lamp_test
+    type: bool
+    initial_value: 'true'
 
   # Menu Variables (Persisted across reboots)
   - id: temp_low
@@ -165,6 +174,45 @@ interval:
           id(fan1_angle) = fmodf(id(fan1_angle) + step(id(fan_1_speed).state), 360.0f);
           id(fan2_angle) = fmodf(id(fan2_angle) + step(id(fan_2_speed).state), 360.0f);
           id(oled_display)->update();
+
+  # Fan running-indicators: blink at 2Hz while the tachometer reports motion,
+  # dark otherwise. Keyed off the tach rather than the commanded duty, so a fan
+  # that is being driven but has stalled or lost power reads as stopped -- the
+  # same signal the on-screen rotor uses.
+  - interval: 250ms
+    then:
+      - lambda: |-
+          static bool phase = false;
+          phase = !phase;
+          auto blink = [](output::FloatOutput *led, float rpm) -> float {
+            bool spinning = !std::isnan(rpm) && rpm > 0.0f;
+            float level = (id(lamp_test) || (spinning && phase)) ? 1.0f : 0.0f;
+            led->set_level(level);
+            return level;
+          };
+          float l1 = blink(id(led_1_output), id(fan_1_speed).state);
+          float l2 = blink(id(led_2_output), id(fan_2_speed).state);
+
+          // Separates the three ways this goes quiet: a tach reading of 0/NaN
+          // (nothing to indicate), a level that never goes high (logic), and a
+          // level that does alternate while the LED stays dark (wiring or
+          // polarity).
+          //
+          // Counts high ticks rather than sampling the level, because the
+          // report is 1s and the tick is 250ms: any single sample lands on the
+          // same phase parity every time and would read a blinking output as
+          // permanently off. hi/ticks should sit at 2/4 while a fan spins.
+          static uint32_t last_log = 0, ticks = 0, hi1 = 0, hi2 = 0;
+          ticks++;
+          if (l1 > 0.5f) hi1++;
+          if (l2 > 0.5f) hi2++;
+          if (millis() - last_log >= 1000) {
+            last_log = millis();
+            ESP_LOGD("led_blink", "rpm1=%.0f hi1=%u/%u | rpm2=%.0f hi2=%u/%u",
+                     id(fan_1_speed).state, hi1, ticks,
+                     id(fan_2_speed).state, hi2, ticks);
+            ticks = hi1 = hi2 = 0;
+          }
 
   # Re-evaluate the fan curve once per second
   - interval: 1s
@@ -337,6 +385,8 @@ output:
       inverted: true
     frequency: 25000Hz
 
+  # Fan running-indicators. Driven only by the blink interval below -- no light
+  # entity on top of them, so HA never sees them and cannot fight the blink.
   - platform: ledc
     id: led_1_output
     pin: GPIO39
@@ -344,17 +394,6 @@ output:
   - platform: ledc
     id: led_2_output
     pin: GPIO40
-
-light:
-  - platform: monochromatic
-    id: led_1
-    name: "LED 1"
-    output: led_1_output
-
-  - platform: monochromatic
-    id: led_2
-    name: "LED 2"
-    output: led_2_output
 
 fan:
   - platform: speed
@@ -473,42 +512,111 @@ number:
 
 # Sensors Setup
 sensor:
-  # INA3221 Power Monitor
+  # Power Monitoring: one INA3221 per rail, three shunted branches each.
+  # Addresses are set by the A0 strap -- GND=0x40, VS=0x41, SDA=0x42 -- so the
+  # three parts coexist on the same bus as the ADS1115 (0x48) and OLED (0x3C).
+
+  # Rail 1: 24V input, branches 1..3
   - platform: ina3221
     address: 0x40
-    # Channel 1: Power Input
     channel_1:
       bus_voltage:
-        name: "Power Input Voltage"
-        id: power_in_v
+        name: "24V In Ch1 Voltage"
+        id: in24_1_v
       current:
-        name: "Power Input Current"
-        id: power_in_i
+        name: "24V In Ch1 Current"
+        id: in24_1_i
       power:
-        name: "Power Input Power"
-        id: power_in_p
-    # Channel 2: 12V Output
+        name: "24V In Ch1 Power"
+        id: in24_1_p
     channel_2:
       bus_voltage:
-        name: "12V Output Voltage"
-        id: power_12v_v
+        name: "24V In Ch2 Voltage"
+        id: in24_2_v
       current:
-        name: "12V Output Current"
-        id: power_12v_i
+        name: "24V In Ch2 Current"
+        id: in24_2_i
       power:
-        name: "12V Output Power"
-        id: power_12v_p
-    # Channel 3: 5V Output
+        name: "24V In Ch2 Power"
+        id: in24_2_p
     channel_3:
       bus_voltage:
-        name: "5V Output Voltage"
-        id: power_5v_v
+        name: "24V In Ch3 Voltage"
+        id: in24_3_v
       current:
-        name: "5V Output Current"
-        id: power_5v_i
+        name: "24V In Ch3 Current"
+        id: in24_3_i
       power:
-        name: "5V Output Power"
-        id: power_5v_p
+        name: "24V In Ch3 Power"
+        id: in24_3_p
+
+  # Rail 2: 12V output, branches 1..3
+  - platform: ina3221
+    address: 0x41
+    channel_1:
+      bus_voltage:
+        name: "12V Out Ch1 Voltage"
+        id: out12_1_v
+      current:
+        name: "12V Out Ch1 Current"
+        id: out12_1_i
+      power:
+        name: "12V Out Ch1 Power"
+        id: out12_1_p
+    channel_2:
+      bus_voltage:
+        name: "12V Out Ch2 Voltage"
+        id: out12_2_v
+      current:
+        name: "12V Out Ch2 Current"
+        id: out12_2_i
+      power:
+        name: "12V Out Ch2 Power"
+        id: out12_2_p
+    channel_3:
+      bus_voltage:
+        name: "12V Out Ch3 Voltage"
+        id: out12_3_v
+      current:
+        name: "12V Out Ch3 Current"
+        id: out12_3_i
+      power:
+        name: "12V Out Ch3 Power"
+        id: out12_3_p
+
+  # Rail 3: 5V output, branches 1..3
+  - platform: ina3221
+    address: 0x42
+    channel_1:
+      bus_voltage:
+        name: "5V Out Ch1 Voltage"
+        id: out5_1_v
+      current:
+        name: "5V Out Ch1 Current"
+        id: out5_1_i
+      power:
+        name: "5V Out Ch1 Power"
+        id: out5_1_p
+    channel_2:
+      bus_voltage:
+        name: "5V Out Ch2 Voltage"
+        id: out5_2_v
+      current:
+        name: "5V Out Ch2 Current"
+        id: out5_2_i
+      power:
+        name: "5V Out Ch2 Power"
+        id: out5_2_p
+    channel_3:
+      bus_voltage:
+        name: "5V Out Ch3 Voltage"
+        id: out5_3_v
+      current:
+        name: "5V Out Ch3 Current"
+        id: out5_3_i
+      power:
+        name: "5V Out Ch3 Power"
+        id: out5_3_p
 
   # Tachometers
   - platform: pulse_counter
@@ -798,6 +906,14 @@ display:
         }
       };
 
+      // Channel tags in inverse video: filled block, then the text drawn in
+      // COLOR_OFF so it knocks out of the block. Box is 14x10 for a 2-char
+      // 6x10 tag with a 1px margin either side.
+      auto draw_label = [&it](int x, int y, const char *text) {
+        it.filled_rectangle(x, y, 14, 10);
+        it.print(x + 1, y, id(font_main), COLOR_OFF, text);
+      };
+
       // Rotor: ring housing, hub, and 3 swept blades at 120deg spacing.
       auto draw_rotor = [&it](int cx, int cy, int r, float angle_deg) {
         it.circle(cx, cy, r);
@@ -817,6 +933,30 @@ display:
         }
       };
 
+      // One rail per screen, one INA3221 branch per row: three voltages, three
+      // currents, three powers in a 3x3 table. Columns are placed by hand
+      // rather than padded into one format string so the header lines up with
+      // the fields under it: 6px per char puts the last column at 90..126,
+      // just inside the 128px panel.
+      auto draw_rail = [&it](const char *title,
+                             sensor::Sensor *const v[3],
+                             sensor::Sensor *const a[3],
+                             sensor::Sensor *const w[3]) {
+        it.print(0, 0, id(font_main), title);
+        it.print(0, 13, id(font_main), "CH");
+        it.print(18, 13, id(font_main), "VOLT");
+        it.print(61, 13, id(font_main), "AMP");
+        it.print(96, 13, id(font_main), "WATT");
+        it.line(0, 23, 127, 23);
+        for (int i = 0; i < 3; i++) {
+          int y = 26 + i * 13;
+          it.printf(0, y, id(font_main), "%d", i + 1);
+          it.printf(12, y, id(font_main), "%6.2f", v[i]->state);
+          it.printf(52, y, id(font_main), "%6.3f", a[i]->state);
+          it.printf(90, y, id(font_main), "%6.2f", w[i]->state);
+        }
+      };
+
       if (id(active_screen) == 0) {
         // Skip unread probes: before the first ADC conversion every sensor is
         // NaN, and one NaN would poison a plain 4-way average.
@@ -831,46 +971,66 @@ display:
         }
         float avg_temp = t_n ? (t_sum / t_n) : NAN;
 
-        // 21 chars per line at 6px: two temps per row, average right-aligned.
-        it.printf(0, 0, id(font_main), "T1:%.1f T2:%.1f", id(temp_1).state, id(temp_2).state);
-        it.printf(0, 10, id(font_main), "T3:%.1f T4:%.1f", id(temp_3).state, id(temp_4).state);
-        it.printf(92, 10, id(font_main), "A:%.1f", avg_temp);
+        // Two temps per row, average right-aligned. Tags are drawn separately
+        // from the values so each one gets its own inverted block; the value
+        // columns are fixed rather than following the tag text, which keeps
+        // the second pair clear of the average box at x=92.
+        draw_label(0, 0, "T1");
+        it.printf(16, 0, id(font_main), "%.1f", id(temp_1).state);
+        draw_label(46, 0, "T2");
+        it.printf(62, 0, id(font_main), "%.1f", id(temp_2).state);
+        draw_label(0, 10, "T3");
+        it.printf(16, 10, id(font_main), "%.1f", id(temp_3).state);
+        draw_label(46, 10, "T4");
+        it.printf(62, 10, id(font_main), "%.1f", id(temp_4).state);
+        it.printf(100, 5, id(font_main), "%.1f", avg_temp);
+        it.rectangle(92, 3, 36, 13);
 
         int f1_pct = id(fan_1).state ? id(fan_1).speed : 0;
         int f2_pct = id(fan_2).state ? id(fan_2).speed : 0;
 
         // Gauges stop at x=102 to leave the right edge for the rotors.
-        it.printf(0, 22, id(font_main), "F1:%3d%%", f1_pct);
+        draw_label(0, 26, "F1");
+        it.printf(16, 26, id(font_main), "%3d%%", f1_pct);
         draw_gauge(46, 22, 56, 10, f1_pct);
-        // "RPM:actual-target" -- 13 chars at 6px ends at x=78, clear of the
-        // rotor which starts at x=104.
-        it.printf(0, 32, id(font_main), "RPM:%4.0f-%4.0f",
-                  id(fan_1_speed).state, id(fan1_target_rpm));
-        draw_rotor(113, 31, 9, id(fan1_angle));
 
-        it.printf(0, 44, id(font_main), "F2:%3d%%", f2_pct);
+        it.rectangle(46, 31, 29, 11);
+        it.rectangle(74, 31, 28, 11);
+
+        it.printf(50, 32, id(font_main), "%4.0f", id(fan_1_speed).state);
+        it.printf(77, 32, id(font_main), "%4.0f", id(fan1_target_rpm));
+
+        draw_rotor(115, 32, 9, id(fan1_angle));
+
+        draw_label(0, 48, "F2");
+        it.printf(18, 48, id(font_main), "%3d%%", f2_pct);
         draw_gauge(46, 44, 56, 10, f2_pct);
-        it.printf(0, 54, id(font_main), "RPM:%4.0f-%4.0f",
-                  id(fan_2_speed).state, id(fan2_target_rpm));
-        draw_rotor(113, 53, 9, id(fan2_angle));
+
+        it.rectangle(46, 53, 29, 11);
+        it.rectangle(74, 53, 28, 11);
+
+        it.printf(50, 54, id(font_main), "%4.0f", id(fan_2_speed).state);
+        it.printf(77, 54, id(font_main), "%4.0f", id(fan2_target_rpm));
+
+        draw_rotor(115, 54, 9, id(fan2_angle));
       }
       else if (id(active_screen) == 1) {
-        it.print(0, 0, id(font_main), "-- POWER INPUT --");
-        it.printf(0, 16, id(font_main), "Voltage : %6.2f V", id(power_in_v).state);
-        it.printf(0, 32, id(font_main), "Current : %6.2f A", id(power_in_i).state);
-        it.printf(0, 48, id(font_main), "Power   : %6.2f W", id(power_in_p).state);
+        sensor::Sensor *const v[3] = {id(in24_1_v), id(in24_2_v), id(in24_3_v)};
+        sensor::Sensor *const a[3] = {id(in24_1_i), id(in24_2_i), id(in24_3_i)};
+        sensor::Sensor *const w[3] = {id(in24_1_p), id(in24_2_p), id(in24_3_p)};
+        draw_rail("-- 24V INPUT --", v, a, w);
       }
       else if (id(active_screen) == 2) {
-        it.print(0, 0, id(font_main), "-- OUTPUT 12V --");
-        it.printf(0, 16, id(font_main), "Voltage : %6.2f V", id(power_12v_v).state);
-        it.printf(0, 32, id(font_main), "Current : %6.2f A", id(power_12v_i).state);
-        it.printf(0, 48, id(font_main), "Power   : %6.2f W", id(power_12v_p).state);
+        sensor::Sensor *const v[3] = {id(out12_1_v), id(out12_2_v), id(out12_3_v)};
+        sensor::Sensor *const a[3] = {id(out12_1_i), id(out12_2_i), id(out12_3_i)};
+        sensor::Sensor *const w[3] = {id(out12_1_p), id(out12_2_p), id(out12_3_p)};
+        draw_rail("-- 12V OUTPUT --", v, a, w);
       }
       else if (id(active_screen) == 3) {
-        it.print(0, 0, id(font_main), "-- OUTPUT 5V --");
-        it.printf(0, 16, id(font_main), "Voltage : %6.2f V", id(power_5v_v).state);
-        it.printf(0, 32, id(font_main), "Current : %6.2f A", id(power_5v_i).state);
-        it.printf(0, 48, id(font_main), "Power   : %6.2f W", id(power_5v_p).state);
+        sensor::Sensor *const v[3] = {id(out5_1_v), id(out5_2_v), id(out5_3_v)};
+        sensor::Sensor *const a[3] = {id(out5_1_i), id(out5_2_i), id(out5_3_i)};
+        sensor::Sensor *const w[3] = {id(out5_1_p), id(out5_2_p), id(out5_3_p)};
+        draw_rail("-- 5V OUTPUT --", v, a, w);
       }
       else if (id(active_screen) == 4) {
         it.printf(0, 0, id(font_main), "MENU %-3s   HOLD=EXIT", id(edit_mode) ? "EDT" : "SEL");
