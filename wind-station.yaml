@@ -282,7 +282,7 @@ sensor:
     icon: "mdi:weather-windy-variant"
     device_class: wind_speed
     state_class: measurement
-    update_interval: 500ms
+    update_interval: 5s
     lambda: |-
       return id(wind_speed).state;
     filters:
