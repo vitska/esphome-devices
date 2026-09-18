@@ -209,8 +209,8 @@ interval:
           if (millis() - last_log >= 1000) {
             last_log = millis();
             ESP_LOGD("led_blink", "rpm1=%.0f hi1=%u/%u | rpm2=%.0f hi2=%u/%u",
-                     id(fan_1_speed).state, hi1, ticks,
-                     id(fan_2_speed).state, hi2, ticks);
+                     id(fan_1_speed).state, (unsigned) hi1, (unsigned) ticks,
+                     id(fan_2_speed).state, (unsigned) hi2, (unsigned) ticks);
             ticks = hi1 = hi2 = 0;
           }
 
@@ -254,7 +254,9 @@ interval:
             }
             for (auto &ip : ethernet::global_eth_component->get_ip_addresses()) {
               if (ip.is_set()) {
-                report += " ip=" + ip.str();
+                char ip_buf[network::IP_ADDRESS_BUFFER_SIZE];
+                ip.str_to(ip_buf);
+                report += std::string(" ip=") + ip_buf;
               }
             }
           }
