@@ -53,7 +53,7 @@ i2c:
   sda: GPIO32
   scl: GPIO33
   scan: true
-  frequency: 200kHz
+  frequency: 400kHz
 
 # TCA9548A Multiplexer mapping channels
 tca9548a:
@@ -90,16 +90,25 @@ globals:
     type: uint32_t
     restore_value: false
     initial_value: '0'
-  # Circular mean accumulators for the 5s wind direction average
-  - id: dir_sin_accum
-    type: float
+  # Circular mean accumulators for the 10-minute sliding wind direction
+  # average, split into 30 x 20s buckets so each 20s tick ages out the
+  # oldest bucket instead of resetting the whole window
+  # Explicit 30-element initializers, not the '{0}' shorthand: with a single
+  # zero, ESPHome's codegen picks GlobalsComponent's decayed-pointer
+  # constructor overload instead of the std::array one, which fails to build
+  - id: dir_sin_buckets
+    type: float[30]
     restore_value: false
-    initial_value: '0.0'
-  - id: dir_cos_accum
-    type: float
+    initial_value: '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}'
+  - id: dir_cos_buckets
+    type: float[30]
     restore_value: false
-    initial_value: '0.0'
-  - id: dir_sample_count
+    initial_value: '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}'
+  - id: dir_count_buckets
+    type: uint32_t[30]
+    restore_value: false
+    initial_value: '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}'
+  - id: dir_bucket_idx
     type: uint32_t
     restore_value: false
     initial_value: '0'
@@ -121,6 +130,19 @@ number:
     on_value:
       then:
         - script.execute: publish_wind_direction
+
+  # Anemometer RPM -> m/s calibration, shared by Wind Speed and Wind Gust
+  - platform: template
+    name: "Wind RPM to m/s"
+    id: wind_rpm_to_ms
+    min_value: 0
+    max_value: 1
+    step: 0.0001
+    optimistic: true
+    restore_value: true
+    initial_value: 0.033
+    mode: box
+    entity_category: config
 
 switch:
   - platform: template
@@ -149,12 +171,13 @@ script:
           deg = fmodf(deg, 360.0f);
           if (deg < 0.0f) deg += 360.0f;
           id(wind_direction).publish_state(deg);
-          // Accumulate for the 5s circular mean (averaging degrees directly
-          // breaks near North, e.g. 350°/10° should average to 0°, not 180°)
+          // Accumulate into the current 20s bucket of the 10-minute circular
+          // mean (averaging degrees directly breaks near North, e.g. 350°/10°
+          // should average to 0°, not 180°)
           float rad = deg * (M_PI / 180.0f);
-          id(dir_sin_accum) += sinf(rad);
-          id(dir_cos_accum) += cosf(rad);
-          id(dir_sample_count) += 1;
+          id(dir_sin_buckets)[id(dir_bucket_idx)] += sinf(rad);
+          id(dir_cos_buckets)[id(dir_bucket_idx)] += cosf(rad);
+          id(dir_count_buckets)[id(dir_bucket_idx)] += 1;
 
 sensor:
   - platform: uptime
@@ -163,13 +186,36 @@ sensor:
   - platform: bme280_i2c
     i2c_id: bus_main
     address: 0x76
-    update_interval: 60s
+    update_interval: 10s
     temperature:
       name: "Temperature"
+      oversampling: 8x
+      id: bme280_temp
+      filters:
+        - sliding_window_moving_average:
+            window_size: 15
+            send_every: 6
     humidity:
       name: "Humidity"
+      oversampling: 1x
+      filters:
+        - sliding_window_moving_average:
+            window_size: 15
+            send_every: 6
     pressure:
       name: "Pressure"
+      oversampling: 4x
+      filters:
+        - sliding_window_moving_average:
+            window_size: 15
+            send_every: 6
+        - lambda: |-
+            if (id(bme280_temp).has_state()) {
+              const float temp_ref = 13.0; // Your baseline standard temperature in °C
+              const float temp_coeff = 3.83; // hPa per °C thermal offset derived from graph
+              return x - (temp_coeff * (id(bme280_temp).state - temp_ref));
+            }
+            return x;
 
   # Wind Vane Position Sensor — raw 12-bit count (0..4095), internal only,
   # used solely to compute Wind Direction / Wind Direction Cardinal
@@ -192,7 +238,7 @@ sensor:
     id: anemometer_angle
     internal: true
     as5600_id: anemometer_hub
-    update_interval: 100ms
+    update_interval: 25ms
     raw_position:
       id: raw_rpm_angle
       internal: true
@@ -222,40 +268,51 @@ sensor:
     update_interval: never
     filters:
       # Suppress republishing sensor noise, but pass any real movement through
-      - delta: 0.5
+      - delta: 1
 
-  # Wind direction averaged (circular mean) over a 5s window
+  # Wind direction averaged (circular mean) over a sliding 10-minute window,
+  # reported every 20s as the oldest 20s bucket ages out
   - platform: template
-    name: "Wind Direction Avg 5s"
-    id: wind_direction_avg_5s
+    name: "Wind Direction Avg 60s"
+    id: wind_direction_avg_60s
     unit_of_measurement: "°"
     accuracy_decimals: 1
     icon: "mdi:compass-outline"
     update_interval: 5s
     lambda: |-
-      if (id(dir_sample_count) == 0) return NAN;
-      float deg = atan2f(id(dir_sin_accum), id(dir_cos_accum)) * (180.0f / M_PI);
+      float sin_sum = 0.0f, cos_sum = 0.0f;
+      uint32_t count_sum = 0;
+      for (int i = 0; i < 30; i++) {
+        sin_sum += id(dir_sin_buckets)[i];
+        cos_sum += id(dir_cos_buckets)[i];
+        count_sum += id(dir_count_buckets)[i];
+      }
+      // Advance to the next bucket, aging out the 20s sample it holds from
+      // 10 minutes ago and starting it fresh for the upcoming 20s
+      id(dir_bucket_idx) = (id(dir_bucket_idx) + 1) % 30;
+      id(dir_sin_buckets)[id(dir_bucket_idx)] = 0.0f;
+      id(dir_cos_buckets)[id(dir_bucket_idx)] = 0.0f;
+      id(dir_count_buckets)[id(dir_bucket_idx)] = 0;
+      if (count_sum == 0) return NAN;
+      float deg = atan2f(sin_sum, cos_sum) * (180.0f / M_PI);
       if (deg < 0.0f) deg += 360.0f;
-      id(dir_sin_accum) = 0.0f;
-      id(dir_cos_accum) = 0.0f;
-      id(dir_sample_count) = 0;
-      // 16-point compass rose, each sector 22.5° wide
-      static const char *POINTS[16] = {
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+      // 8-point compass rose, each sector 45° wide
+      static const char *POINTS[8] = {
+        "N", "NE", "E", "SE", "S", "SW", "W", "NW"
       };
-      int idx = (int) roundf(deg / 22.5f) % 16;
+      int idx = (int) roundf(deg / 45.0f) % 8;
       id(wind_direction_cardinal).publish_state(POINTS[idx]);
       return deg;
 
   # Anemometer speed from accumulated counts over the elapsed interval
   - platform: template
     name: "Anemometer RPM"
+    internal: true
     id: anemometer_rpm
     unit_of_measurement: "RPM"
     accuracy_decimals: 1
     icon: "mdi:fan"
-    update_interval: 500ms
+    update_interval: 100ms
     lambda: |-
       uint32_t now = millis();
       if (id(anem_last_calc_ms) == 0) {
@@ -272,24 +329,41 @@ sensor:
     filters:
       - clamp:
           min_value: 0
+#      - delta: 1
 
-  # 30s wind gust — max of Wind Speed over a 30-sample (1s * 30 = 30s) window
+  # Gust RPM — max of Anemometer RPM over a sliding window
+  # (window_size * update_interval), published every send_every samples
   - platform: template
-    name: "Wind Gust 30s"
-    id: wind_gust_30s
+    name: "Wind Gust RPM"
+    id: wind_gust_rpm
+    unit_of_measurement: "RPM"
+    accuracy_decimals: 1
+    icon: "mdi:fan"
+    update_interval: 50ms
+    lambda: |-
+      return id(anemometer_rpm).state;
+    filters:
+      - max:
+          window_size: 1200
+          send_every: 100
+          send_first_at: 1
+#      - delta: 0.2
+    on_value:
+      then:
+        - lambda: |-
+            id(wind_gust).publish_state(id(wind_rpm_to_ms).state * x);
+
+  # Wind gust — Wind Gust RPM translated to m/s with the same calibration as Wind Speed
+  - platform: template
+    name: "Wind Gust"
+    id: wind_gust
     unit_of_measurement: "m/s"
     accuracy_decimals: 2
     icon: "mdi:weather-windy-variant"
     device_class: wind_speed
     state_class: measurement
-    update_interval: 5s
-    lambda: |-
-      return id(wind_speed).state;
-    filters:
-      - max:
-          window_size: 30
-          send_every: 1
-          send_first_at: 1
+    # Published by wind_gust_rpm, never polled
+    update_interval: never
 
   # Wind speed derived from anemometer RPM via power-law calibration: V = a * RPM^b
   # Placeholder coefficients (a=0.0056, b=1.0) — tune against a reference anemometer
@@ -301,11 +375,12 @@ sensor:
     icon: "mdi:weather-windy"
     device_class: wind_speed
     state_class: measurement
-    update_interval: 500ms
+    update_interval: 100ms
     lambda: |-
       float rpm = id(anemometer_rpm).state;
       if (std::isnan(rpm)) return NAN;
-      return 0.022f * rpm;
+      return id(wind_rpm_to_ms).state * rpm;
     filters:
       - clamp:
           min_value: 0
+      - delta: 0.01
