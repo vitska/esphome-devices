@@ -407,9 +407,9 @@ sensor:
       float revs = fabsf(id(anem_accum)) / 4096.0f;
       id(anem_accum) = 0.0f;
       return revs / dt * 60.0f;
-    filters:
-      - clamp:
-          min_value: 0
+    # filters:
+    #   - clamp:
+    #       min_value: 0
 #      - delta: 1
     # Feeds the 500ms ring that Wind Speed averages. NaN ticks (first sample,
     # or a zero-length interval) must not be stored as readings.
@@ -429,12 +429,12 @@ sensor:
     unit_of_measurement: "RPM"
     accuracy_decimals: 1
     icon: "mdi:fan"
-    update_interval: 50ms
+    update_interval: 200ms
     lambda: |-
       return id(anemometer_rpm).state;
     filters:
       - max:
-          window_size: 1200
+          window_size: 2400
           send_every: 100
           send_first_at: 1
 #      - delta: 0.2
