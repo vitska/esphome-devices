@@ -142,6 +142,25 @@ globals:
     restore_value: false
     initial_value: '0'
 
+  # Ring of the last 5 Anemometer RPM samples. Anemometer RPM keeps updating
+  # every 100ms, so 5 slots cover a 500ms window; Wind Speed publishes their
+  # arithmetic mean every 500ms. Speeds are non-negative, so a plain mean is
+  # safe here (no circular math needed). Each new sample fully overwrites its
+  # slot; explicit initializers for the same codegen reason as above.
+  - id: rpm_ring
+    type: float[5]
+    restore_value: false
+    initial_value: '{0, 0, 0, 0, 0}'
+  - id: rpm_ring_idx
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  # Valid samples in the ring, saturates at 5
+  - id: rpm_samples
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
 # Non-volatile calibration parameters (stored in NVS, survive power cycles)
 number:
   - platform: template
@@ -392,6 +411,15 @@ sensor:
       - clamp:
           min_value: 0
 #      - delta: 1
+    # Feeds the 500ms ring that Wind Speed averages. NaN ticks (first sample,
+    # or a zero-length interval) must not be stored as readings.
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isnan(x)) return;
+            id(rpm_ring)[id(rpm_ring_idx)] = x;
+            id(rpm_ring_idx) = (id(rpm_ring_idx) + 1) % 5;
+            if (id(rpm_samples) < 5) id(rpm_samples)++;
 
   # Gust RPM — max of Anemometer RPM over a sliding window
   # (window_size * update_interval), published every send_every samples
@@ -429,6 +457,9 @@ sensor:
 
   # Wind speed derived from anemometer RPM via power-law calibration: V = a * RPM^b
   # Placeholder coefficients (a=0.0056, b=1.0) — tune against a reference anemometer
+  # Published every 500ms as the mean of the 5 RPM readings taken in that
+  # period (Anemometer RPM still updates every 100ms). No delta filter, so a
+  # value goes out on every 500ms poll regardless of movement.
   - platform: template
     name: "Wind Speed"
     id: wind_speed
@@ -437,12 +468,12 @@ sensor:
     icon: "mdi:weather-windy"
     device_class: wind_speed
     state_class: measurement
-    update_interval: 100ms
+    update_interval: 500ms
     lambda: |-
-      float rpm = id(anemometer_rpm).state;
-      if (std::isnan(rpm)) return NAN;
-      return id(wind_rpm_to_ms).state * rpm;
+      if (id(rpm_samples) == 0) return NAN;
+      float rpm_sum = 0.0f;
+      for (int i = 0; i < 5; i++) rpm_sum += id(rpm_ring)[i];
+      return id(wind_rpm_to_ms).state * (rpm_sum / (float) id(rpm_samples));
     filters:
       - clamp:
           min_value: 0
-      - delta: 0.01
