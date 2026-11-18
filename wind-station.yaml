@@ -113,6 +113,35 @@ globals:
     restore_value: false
     initial_value: '0'
 
+  # Ring of the last 10 vane samples. The physical sensor keeps sampling at
+  # 50ms, so 10 slots cover a 500ms window; publish_wind_direction publishes
+  # their circular mean every 500ms. Each new sample fully overwrites its
+  # slot, so summing all slots yields exactly the last 10 readings (slots not
+  # yet filled stay at 0). Explicit 10-element initializers for the same
+  # codegen reason as the 30-element arrays above.
+  - id: vane_sin_ring
+    type: float[10]
+    restore_value: false
+    initial_value: '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}'
+  - id: vane_cos_ring
+    type: float[10]
+    restore_value: false
+    initial_value: '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}'
+  - id: vane_ring_idx
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  # Samples in the ring, saturates at 10
+  - id: vane_samples
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  # millis() of the last vane sample, used to skip publishing stale data
+  - id: vane_last_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+
 # Non-volatile calibration parameters (stored in NVS, survive power cycles)
 number:
   - platform: template
@@ -156,28 +185,36 @@ switch:
     on_turn_off:
       - script.execute: publish_wind_direction
 
-# Recomputes and publishes the wind direction as soon as any input changes
+# Publishes the 500 ms average of the last 10 vane samples. Driven by the
+# interval below, and also executed immediately by the offset/reverse
+# calibration handlers.
 script:
   - id: publish_wind_direction
     mode: single
     then:
       - lambda: |-
-          float raw = id(raw_vane_position).state;
-          if (std::isnan(raw)) return;
-          // 12-bit count -> degrees
-          float deg = raw * (360.0f / 4096.0f);
-          if (id(dir_reverse).state) deg = 360.0f - deg;
-          deg -= id(dir_offset).state;
-          deg = fmodf(deg, 360.0f);
+          // Skip publishing until the vane has produced samples, and stop
+          // republishing stale data if the vane sensor stops updating
+          if (id(vane_samples) == 0) return;
+          if (millis() - id(vane_last_ms) > 1000) return;
+          // Circular mean of the last 10 samples (10 x 50ms = 500ms window).
+          // Averaging degrees directly breaks near North, e.g. 350°/10°
+          // should average to 0°, not 180°.
+          float sin_sum = 0.0f, cos_sum = 0.0f;
+          for (int i = 0; i < 10; i++) {
+            sin_sum += id(vane_sin_ring)[i];
+            cos_sum += id(vane_cos_ring)[i];
+          }
+          float deg = atan2f(sin_sum, cos_sum) * (180.0f / M_PI);
           if (deg < 0.0f) deg += 360.0f;
           id(wind_direction).publish_state(deg);
-          // Accumulate into the current 20s bucket of the 10-minute circular
-          // mean (averaging degrees directly breaks near North, e.g. 350°/10°
-          // should average to 0°, not 180°)
-          float rad = deg * (M_PI / 180.0f);
-          id(dir_sin_buckets)[id(dir_bucket_idx)] += sinf(rad);
-          id(dir_cos_buckets)[id(dir_bucket_idx)] += cosf(rad);
-          id(dir_count_buckets)[id(dir_bucket_idx)] += 1;
+
+# Publishes Wind Direction on a fixed 500ms cadence, independent of the 50ms
+# physical sampling rate that fills the 10-sample ring
+interval:
+  - interval: 500ms
+    then:
+      - script.execute: publish_wind_direction
 
 sensor:
   - platform: uptime
@@ -218,7 +255,10 @@ sensor:
             return x;
 
   # Wind Vane Position Sensor — raw 12-bit count (0..4095), internal only,
-  # used solely to compute Wind Direction / Wind Direction Cardinal
+  # used solely to compute Wind Direction / Wind Direction Cardinal.
+  # Keeps sampling at 50ms; every sample is accumulated into the 500ms ring
+  # (Wind Direction) and the 10-minute buckets (Wind Direction Avg), while the
+  # published value itself only goes out on the 500ms interval.
   - platform: as5600
     id: wind_vane_angle
     internal: true
@@ -229,7 +269,30 @@ sensor:
       internal: true
       on_value:
         then:
-          - script.execute: publish_wind_direction
+          - lambda: |-
+              float raw = x;
+              if (std::isnan(raw)) return;
+              // 12-bit count -> degrees
+              float deg = raw * (360.0f / 4096.0f);
+              if (id(dir_reverse).state) deg = 360.0f - deg;
+              deg -= id(dir_offset).state;
+              deg = fmodf(deg, 360.0f);
+              if (deg < 0.0f) deg += 360.0f;
+              float rad = deg * (M_PI / 180.0f);
+              float s = sinf(rad);
+              float c = cosf(rad);
+              // 500ms ring: each sample fully overwrites its slot, so the
+              // slots always hold the last 10 readings
+              id(vane_sin_ring)[id(vane_ring_idx)] = s;
+              id(vane_cos_ring)[id(vane_ring_idx)] = c;
+              id(vane_ring_idx) = (id(vane_ring_idx) + 1) % 10;
+              if (id(vane_samples) < 10) id(vane_samples)++;
+              id(vane_last_ms) = millis();
+              // Accumulate into the current bucket of the sliding 10-minute
+              // circular mean (averaging degrees directly breaks near North)
+              id(dir_sin_buckets)[id(dir_bucket_idx)] += s;
+              id(dir_cos_buckets)[id(dir_bucket_idx)] += c;
+              id(dir_count_buckets)[id(dir_bucket_idx)] += 1;
 
   # Anemometer Position Sensor — raw 12-bit count (0..4095), internal only,
   # used solely to compute Anemometer RPM
@@ -257,18 +320,17 @@ sensor:
               id(anem_last_raw) = cur;
               id(anem_accum) += (float) delta;
 
-  # Wind direction in degrees, offset- and reverse-corrected
+  # Wind direction in degrees, offset- and reverse-corrected. Published every
+  # 500ms as the circular mean of the last 10 vane samples (50ms apart); no
+  # delta filter, so state goes out on every tick regardless of movement.
   - platform: template
     name: "Wind Direction"
     id: wind_direction
     unit_of_measurement: "°"
     accuracy_decimals: 1
     icon: "mdi:compass-outline"
-    # Published by publish_wind_direction, never polled
+    # Published by publish_wind_direction on the 500ms interval, never polled
     update_interval: never
-    filters:
-      # Suppress republishing sensor noise, but pass any real movement through
-      - delta: 1
 
   # Wind direction averaged (circular mean) over a sliding 10-minute window,
   # reported every 20s as the oldest 20s bucket ages out
