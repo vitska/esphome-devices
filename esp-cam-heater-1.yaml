@@ -1,0 +1,94 @@
+substitutions:
+  name: "esp32-cam-heater-1"
+  friendly_name: "Heater Screen Reader Camera #1"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32cam
+  framework:
+    type: arduino
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api.esp32-cam-h1
+
+ota:
+  - platform: esphome
+    password: !secret ota.esp32-cam-h1
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Optional fallback hotspot if Wi-Fi fails
+  ap:
+    ssid: "${name}-Fallback"
+    password: !secret ap.esp32-cam-h1
+
+captive_portal:
+
+# PSRAM required for high-resolution images on ESP32-CAM
+psram:
+
+# Camera Component Configuration
+esp32_camera:
+  name: "Screen Stream"
+  id: my_camera
+  
+  # Pin definitions for AI-Thinker ESP32-CAM
+  external_clock:
+    pin: GPIO0
+    frequency: 20MHz
+  i2c_pins:
+    sda: GPIO26
+    scl: GPIO27
+  data_pins: [GPIO5, GPIO18, GPIO19, GPIO21, GPIO36, GPIO39, GPIO34, GPIO35]
+  vsync_pin: GPIO25
+  href_pin: GPIO23
+  pixel_clock_pin: GPIO22
+  power_down_pin: GPIO32
+
+  # Resolution & Frame Rate Settings
+  # SVGA (800x600) or XGA (1024x768) provides high detail for OCR without overloading RAM
+  resolution: SVGA
+  jpeg_quality: 10 # Range 10-63 (lower = better quality)
+  max_framerate: 5 fps
+
+  # Image Tuning for High-Contrast Digital/LED Screens
+  brightness: -1       # Slightly lower brightness reduces glare on glowing digits
+  contrast: 2          # High contrast helps isolate bright segments against dark background
+  saturation: -2        # Low/grayscale saturation simplifies character segmentation
+  special_effect: none # Options: none, bw, sepia, negative
+
+# Flashlight (On-board high-brightness LED control)
+output:
+  - platform: ledc
+    pin: GPIO4
+    id: gpio_flash_led
+
+light:
+  - platform: monochromatic
+    output: gpio_flash_led
+    name: "Camera Flash"
+    id: flash_light
+
+# On-board Red Status LED (GPIO33, inverted)
+status_led:
+  pin:
+    number: GPIO33
+    inverted: true
+
+# System Diagnostics Sensors
+sensor:
+  - platform: wifi_signal
+    name: "Wi-Fi Signal dBm"
+    update_interval: 10s
+
+  - platform: uptime
+    name: "Uptime"
