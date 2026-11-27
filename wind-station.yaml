@@ -3,6 +3,7 @@ esphome:
   # Scan helper used by the once-a-minute Wi-Fi scan below.
   includes:
     - wifi_scan.h
+  # that was not here
   # This automation exists ONLY to give the PHY a slow, settled power-up. It is
   # deliberately not what provides connectivity: the wifi component raises the
   # AP on its own at boot (see wifi:), so if anything here stalls or fails the
