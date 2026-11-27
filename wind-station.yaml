@@ -1,5 +1,33 @@
 esphome:
   name: wt32-s1-wind-station
+  # Scan helper used by the once-a-minute Wi-Fi scan below.
+  includes:
+    - wifi_scan.h
+  # This automation exists ONLY to give the PHY a slow, settled power-up. It is
+  # deliberately not what provides connectivity: the wifi component raises the
+  # AP on its own at boot (see wifi:), so if anything here stalls or fails the
+  # device is still reachable. priority: -100 (LATE) runs after every component,
+  # including the eth_power output, has been set up; delays are asynchronous
+  # and do not block boot.
+  on_boot:
+    priority: -100
+    then:
+      # The PHY is powered from GPIO16, so it is cold when the board boots.
+      # Point the driver at it only after a full power cycle plus a settling
+      # delay: on a slowly rising supply the PHY's internal power-on reset and
+      # 50MHz oscillator can still be unstable when MDIO first probes it, which
+      # looks like "ethernet never comes up on a cold boot" while a warm reboot
+      # (PHY already powered) works fine. Hold power off to discharge, power
+      # up, settle, and only then let the driver probe over MDIO.
+      - logger.log: "PHY power off (discharge)"
+      - output.turn_off: eth_power
+      - delay: 1s
+      - logger.log: "PHY power on; waiting for supply to settle"
+      - output.turn_on: eth_power
+      # Raise this (e.g. 8s-15s) if the board is still flaky on cold boot.
+      - delay: 5s
+      - logger.log: "Starting ethernet init"
+      - ethernet.enable:
 
 esp32:
   board: esp32dev
@@ -13,10 +41,44 @@ logger:
 api:
   encryption:
     key: !secret api.wind-station
+  # Disabled on purpose: the fallback AP is the way back into a device whose
+  # ethernet died, and an API reboot timeout (5min here, 15min by default)
+  # reboots the device whenever no API client is connected - exactly the state
+  # an AP-only fallback sits in, so it would keep dropping the AP and the
+  # web_server. (The wifi component itself never reboots while an AP exists.)
+  reboot_timeout: 0s
 
 ota:
   - platform: esphome
     password: !secret ota.wind-station
+
+# Recovery net - this matters more than usual here because the board is mounted
+# away from any serial access. With safe_mode configured:
+#   1. If the firmware ever crash-loops, after 10 boots that fail to stay up
+#      only wifi + ota are started, so the fallback AP comes up and the device
+#      can be flashed over the air instead of needing a UART adapter.
+#   2. ESP-IDF OTA rollback gets armed: an image that never survives
+#      boot_is_good_after is reverted by the bootloader on the next reset.
+# Note that in safe mode ethernet is NOT initialised - the AP is the way in.
+safe_mode:
+  num_attempts: 10
+  boot_is_good_after: 1min
+
+# Ethernet is the primary uplink and WiFi (the fallback AP) the secondary one.
+# Declaring both here is what lets ethernet: and wifi: coexist in one config:
+# without it ESPHome refuses the combination outright. The network component
+# then defaults to the first *connected* interface in this order.
+network:
+  priority:
+    - ethernet
+    - wifi
+
+# PHY power enable (WT32-ETH01: GPIO16, active high). Driven explicitly by the
+# on_boot sequence so power is up and settled before the driver probes the PHY.
+output:
+  - platform: gpio
+    pin: GPIO16
+    id: eth_power
 
 # LAN8720 PHY configuration for WT32-ETH01 V1.4
 ethernet:
@@ -27,7 +89,37 @@ ethernet:
     pin: GPIO0
     mode: CLK_EXT_IN
   phy_addr: 1
-  power_pin: GPIO16
+  # No power_pin on purpose: ESPHome refuses to let GPIO16 be owned by both
+  # power_pin and the eth_power output. The output wins because it is the only
+  # one that can hold the PHY off, then give it seconds to settle before init.
+  # Power-cycling the PHY is a full power-on reset; the driver still does its
+  # own BMCR software reset + OUI check over MDIO once eth_power is on.
+  # enable_on_boot: false keeps the driver off the bus until on_boot says go.
+  enable_on_boot: false
+  # Keep the fallback AP in sync with the link at runtime, not just at boot:
+  # a cable pulled later raises the AP, and a recovered link tears it down.
+  on_connect:
+    - logger.log: "Ethernet up; disabling fallback AP"
+    - wifi.disable:
+  on_disconnect:
+    - logger.log: "Ethernet lost; enabling fallback AP"
+    - wifi.enable:
+
+wifi:
+  # Fail open: the AP comes up on its own during boot and is then torn down by
+  # ethernet.on_connect once the link is up. It is deliberately NOT gated on a
+  # boot automation - an earlier version did that and a stalled/failed boot
+  # sequence left the device with no interface at all (no ethernet, no AP, no
+  # way in except serial). The cost is that the AP SSID is briefly visible for
+  # the few seconds a healthy boot needs to bring ethernet up.
+  enable_on_boot: true
+  ap:
+    ssid: "Wind-Station Fallback Hotspot"
+    password: !secret ap.wind-station
+    manual_ip:
+      static_ip: 192.168.4.1
+      gateway: 192.168.4.1
+      subnet: 255.255.255.0
 
 text_sensor:
   - platform: ethernet_info
@@ -35,6 +127,60 @@ text_sensor:
       name: "Ethernet IP Address"
     mac_address:
       name: "Ethernet MAC Address"
+
+  # SSID label for each signal-strength slot below. ESPHome entity names are
+  # fixed at build time, so the once-a-minute scan fills a fixed set of slots
+  # (strongest AP first) instead of creating an entity per network. Slot N
+  # here belongs to "WiFi AP N Signal" in the sensor: block; unused slots are
+  # cleared. Copy a pair to track more than 8 APs.
+  - platform: template
+    name: "WiFi AP 1 SSID"
+    id: wifi_ap1_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 2 SSID"
+    id: wifi_ap2_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 3 SSID"
+    id: wifi_ap3_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 4 SSID"
+    id: wifi_ap4_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 5 SSID"
+    id: wifi_ap5_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 6 SSID"
+    id: wifi_ap6_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 7 SSID"
+    id: wifi_ap7_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 8 SSID"
+    id: wifi_ap8_ssid
+    icon: "mdi:wifi-marker"
+    entity_category: diagnostic
+    update_interval: never
 
   # 16-point compass code (N, NNE, NE, ... NNW), published by publish_wind_direction
   - platform: template
@@ -235,9 +381,172 @@ interval:
     then:
       - script.execute: publish_wind_direction
 
+  # Safety net for the interface state. Runs regardless of what happened
+  # during boot, so the device can never be left with no way in: after a 30s
+  # grace period, if there is no ethernet link and the AP is somehow off, it
+  # is switched back on. Idempotent, so it does not fight the ethernet
+  # on_connect/on_disconnect triggers.
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            and:
+              - lambda: 'return millis() > 30000;'
+              - not:
+                  ethernet.connected:
+              - not:
+                  wifi.enabled:
+          then:
+            - logger.log: "No ethernet and AP off; re-enabling fallback AP"
+            - wifi.enable:
+
+  # Wi-Fi scan, once a minute, filling the "WiFi AP N SSID" / "WiFi AP N Signal"
+  # slot pairs. The radio is normally off while ethernet owns the connection
+  # (the AP is only a fallback), so this opens a short window: raise the AP,
+  # scan, wait for the driver to report, then drop the radio again when
+  # ethernet is up. That means the AP SSID is visible for roughly 6s in every
+  # minute - the price of scanning with the radio off.
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            not:
+              wifi.enabled:
+          then:
+            - wifi.enable:
+            - delay: 1s
+      - lambda: |-
+          // Keep every audible AP, not just ones matching a configured
+          // network (this device has none, so filtered results would be empty).
+          wifi::global_wifi_component->set_keep_scan_results(true);
+          // Driver-level scan; see wifi_scan.h for why not start_scanning().
+          if (!wifi_scan::start()) {
+            ESP_LOGW("wifi_scan", "Scan not started; Wi-Fi radio is off");
+          }
+      - delay: 5s
+      - lambda: |-
+          // Publish the strongest 8 APs into fixed slots (entities cannot be
+          // created at runtime). Insertion into a small top-N list keeps this
+          // free of <algorithm> and of the 255-byte text sensor limit.
+          static constexpr size_t MAX_SLOTS = 8;
+          const auto &results = wifi::global_wifi_component->get_scan_result();
+          const wifi::WiFiScanResult *top[MAX_SLOTS] = {};
+          size_t n = 0;
+          for (const auto &res : results) {
+            if (res.get_is_hidden()) continue;   // no SSID to show
+            const int8_t rssi = res.get_rssi();
+            if (n == MAX_SLOTS && rssi <= top[MAX_SLOTS - 1]->get_rssi()) continue;
+            size_t pos = (n < MAX_SLOTS) ? n : MAX_SLOTS - 1;
+            while (pos > 0 && top[pos - 1]->get_rssi() < rssi) {
+              top[pos] = top[pos - 1];
+              --pos;
+            }
+            top[pos] = &res;
+            if (n < MAX_SLOTS) ++n;
+          }
+
+          sensor::Sensor *rssi_slots[MAX_SLOTS] = {
+              id(wifi_ap1_rssi), id(wifi_ap2_rssi), id(wifi_ap3_rssi), id(wifi_ap4_rssi),
+              id(wifi_ap5_rssi), id(wifi_ap6_rssi), id(wifi_ap7_rssi), id(wifi_ap8_rssi)};
+          text_sensor::TextSensor *ssid_slots[MAX_SLOTS] = {
+              id(wifi_ap1_ssid), id(wifi_ap2_ssid), id(wifi_ap3_ssid), id(wifi_ap4_ssid),
+              id(wifi_ap5_ssid), id(wifi_ap6_ssid), id(wifi_ap7_ssid), id(wifi_ap8_ssid)};
+
+          for (size_t i = 0; i < MAX_SLOTS; i++) {
+            if (i < n) {
+              const auto ssid = top[i]->get_ssid();
+              ssid_slots[i]->publish_state(ssid.c_str(), ssid.size());
+              rssi_slots[i]->publish_state((float) top[i]->get_rssi());
+            } else {
+              // Slot not used by this scan: clear both entities
+              ssid_slots[i]->publish_state("");
+              rssi_slots[i]->publish_state(NAN);
+            }
+          }
+      - if:
+          condition:
+            ethernet.connected:
+          then:
+            - wifi.disable:
+
 sensor:
   - platform: uptime
     name: "Uptime"
+
+  # Signal strength of the APs heard by the minute scan, strongest first.
+  # Slot N pairs with "WiFi AP N SSID"; unused slots go to unknown (NAN).
+  - platform: template
+    name: "WiFi AP 1 Signal"
+    id: wifi_ap1_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 2 Signal"
+    id: wifi_ap2_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 3 Signal"
+    id: wifi_ap3_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 4 Signal"
+    id: wifi_ap4_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 5 Signal"
+    id: wifi_ap5_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 6 Signal"
+    id: wifi_ap6_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 7 Signal"
+    id: wifi_ap7_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
+  - platform: template
+    name: "WiFi AP 8 Signal"
+    id: wifi_ap8_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:wifi"
+    update_interval: never
 
   - platform: bme280_i2c
     i2c_id: bus_main
